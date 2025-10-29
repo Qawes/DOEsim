@@ -1,0 +1,9 @@
+# Ignore external diffractsim files
+diffractsim-main/
+
+# Ignore misc python files
+__pycache__/
+venv/
+build/
+dist/
+main.exe

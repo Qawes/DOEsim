@@ -1,0 +1,45 @@
+Python GUI application using QT6, for the purposes of utilizing "diffractsim" library graphically. 
+The app should consist of three scripts: main.py, gui.py, and engine.py. main is responsible for launching the gui, gui is the frontend facing the user, and engine in the backend, to which all actual calculation requests will be sent. 
+
+A mockup of the  app's layout can be found in "Mockup Main Window.png" and "Mockup Optical vis.png", but a short summary is:
+- Menu bar (Toolbar)
+  |-- File
+  |   |-- New
+  |   |-- Save
+  |   |-- Load
+  |-- Edit
+  |   |-- Options
+  |-- Help
+  |   |-- Help
+  |   |-- About
+- Tab window - separated by a resizable split container (Working area with tabs on top, to switch workspaces, children are of such a tab)
+  |-- working area, with values to enter, and two large image containers separated by a split container (resizable), a solve button under each image
+  
+TODO:
+FEAT - add fifth column (another value)
+     - for lens it is convex / concave -> manage automatically with negative f values
+     - for aperatures it is inverted or not, and a second radio between all other aperatures - is this unknown -> reverse propagation
+     - for screens first value is is it range or single
+     - for screens second value is two numbers: length, and interval between screens
+
+FEAT - add screen as an element into table, and handle it in engine
+     - this means the screen image area needs to have a way to switch between the different screens
+     - single screens obv means a png, range means gif / mp4
+
+MISC - resizing while calculating images hides "calculating" and shows previous image (pr text)
+     - make polychromatic selection text unavailable
+     - add closing button to workspace tabs
+     - add renaming option to workspace tabs
+     - some numberfield should allow for zero values
+     - numberfields with a non zero minimum should jump to a whole integer from minimum value (eg. 0.01 -> 1, not 0.01 -> 1.01)
+     - disable scrollwheel in elements table, add this to Options, by column
+     - make table row numbers start at 0
+     - make table number column wider
+     - add generate names when type changes boolean to options
+     - add deletion warning boolean to options
+     - add option for replacing os.getcwd() with a permanent path
+     - add defaults for monochromatic, wwavelength, extents, resolution
+     - add default element offset (10mm) to options
+     - rename distance to placement (?)
+     - possibly add an option to use relative distances instead of placement - Add moving arrows to elements
+     - add setting for auto highlighting all values when clicking into numberfields
