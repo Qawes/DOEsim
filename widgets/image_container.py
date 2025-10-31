@@ -62,7 +62,7 @@ class ImageContainer(QWidget):
             Elements=elements,
             Backend=Backend,
             side=side,
-            workspace_name=tab.get_workspace_name() if tab else "Workspace 1"
+            workspace_name=tab.get_workspace_name() if tab else "Workspace_1"
         )
         # Handle color or grayscale
         image = QImage()

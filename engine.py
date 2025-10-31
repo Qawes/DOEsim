@@ -61,6 +61,7 @@ def calculate_screen_images(FieldType, Wavelength, ExtentX, ExtentY, Resolution,
 
         F.propagate((elem.distance * mm - propagated_distance))
         propagated_distance = elem.distance * mm
+        
         if elem.element_type == "aperture":
             print(f"Adding aperture element {idx} with params: {elem.params}")
             if "image_path" in elem.params:
@@ -75,45 +76,66 @@ def calculate_screen_images(FieldType, Wavelength, ExtentX, ExtentY, Resolution,
             F.add(Lens(f=elem.params.get("f", 100) * mm))
         
         elif elem.element_type == "screen":
-            is_range = elem.params.get("is_range", False)
-            print(f"Adding screen element {idx} at distance {elem.distance} mm (range: {is_range})")
-            
-            # Get the current field colors
-            screen_image = F.get_colors()
-            
-            # Convert to uint8 format
-            screen_uint8 = (np.clip(screen_image * 255, 0, 255)).astype(np.uint8)
-            if not screen_uint8.flags['C_CONTIGUOUS']:
-                screen_uint8 = np.ascontiguousarray(screen_uint8)
-            
-            # Create filename: Screen_elementnumber_distance_mm.png
-            filename = f"Screen_{screen_element_index}_{elem.distance:.2f}_mm.png"
-            filepath = output_dir / filename
-            
-            # Save the image
-            if screen_uint8.ndim == 3 and screen_uint8.shape[2] == 3:
-                img = Image.fromarray(screen_uint8, mode='RGB')
-            elif screen_uint8.ndim == 2:
-                img = Image.fromarray(screen_uint8, mode='L')
-            else:
-                print(f"Warning: Unsupported image shape {screen_uint8.shape}")
-                continue
-            
-            img.save(filepath)
-            print(f"Saved screen image: {filepath}")
-            
-            # Add to metadata
-            metadata['screens'].append({
-                'element_index': screen_element_index,
-                'distance_mm': elem.distance,
-                'is_range': is_range,
-                'filename': filename,
-                'shape': list(screen_uint8.shape)
-            })
-            
+            is_range = bool(elem.params.get("is_range", False))
+            range_end = float(elem.params.get("range_end_mm", elem.distance))
+            steps = int(elem.params.get("steps", 10))
+            if steps < 1:
+                steps = 1
+            print(f"Adding screen element {idx} at distance {elem.distance} mm (range: {is_range}, to: {range_end}, steps: {steps})")
+
+            # Build list of distances to capture
+            capture_distances = [float(elem.distance)]
+            if is_range:
+                import numpy as _np
+                # Include both endpoints, evenly spaced
+                capture_distances = list(_np.linspace(float(elem.distance), float(range_end), steps))
+
+            # For each capture distance, propagate from current propagated_distance if needed
+            last_capture = float(propagated_distance / mm)
+            for di, d_mm in enumerate(capture_distances):
+                # Propagate delta from current field to desired distance
+                delta_mm = d_mm - last_capture
+                if abs(delta_mm) > 1e-12:
+                    F.propagate(delta_mm * mm)
+                    propagated_distance = d_mm * mm
+                    last_capture = d_mm
+
+                # Get field colors
+                screen_image = F.get_colors()
+                screen_uint8 = (np.clip(screen_image * 255, 0, 255)).astype(np.uint8)
+                if not screen_uint8.flags['C_CONTIGUOUS']:
+                    screen_uint8 = np.ascontiguousarray(screen_uint8)
+
+                # Create filename with slice index when range
+                if is_range:
+                    filename = f"Screen_{screen_element_index}_{d_mm:.2f}_mm_slice_{di+1:03d}.png"
+                else:
+                    filename = f"Screen_{screen_element_index}_{d_mm:.2f}_mm.png"
+                filepath = output_dir / filename
+
+                # Save
+                if screen_uint8.ndim == 3 and screen_uint8.shape[2] == 3:
+                    img = Image.fromarray(screen_uint8, mode='RGB')
+                elif screen_uint8.ndim == 2:
+                    img = Image.fromarray(screen_uint8, mode='L')
+                else:
+                    print(f"Warning: Unsupported image shape {screen_uint8.shape}")
+                    continue
+                img.save(filepath)
+                print(f"Saved screen image: {filepath}")
+
+                metadata['screens'].append({
+                    'element_index': screen_element_index,
+                    'distance_mm': d_mm,
+                    'is_range': is_range,
+                    'range_end_mm': range_end if is_range else None,
+                    'steps': steps if is_range else None,
+                    'slice_index': di+1 if is_range else None,
+                    'filename': filename,
+                    'shape': list(screen_uint8.shape)
+                })
+
             screen_element_index += 1
-            
-            #TODO: handle if screen is range - feature for later
 
     # Save metadata file
     metadata_path = output_dir / "metadata.txt"

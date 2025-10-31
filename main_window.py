@@ -125,6 +125,8 @@ class MainWindow(QMainWindow):
                     entry['aperture_path'] = node.aperture_path or ""
                 elif node.type == 'Screen':
                     entry['is_range'] = bool(node.is_range) if node.is_range is not None else False
+                    entry['range_end_mm'] = float(node.range_end) if node.range_end is not None else float(node.distance)
+                    entry['steps'] = int(node.steps) if node.steps is not None else 10
                 elements.append(entry)
                 node = node.next
 
@@ -165,7 +167,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Save Workspace", f"Failed to save workspace:\n{e}")
 
     def load_workspace(self):
-        """Load a workspace JSON into the active tab (name, params, elements, order, column widths)."""
+        """Load a workspace JSON into a NEW tab (name, params, elements, order, column widths)."""
         try:
             import json
             import os
@@ -186,36 +188,30 @@ class MainWindow(QMainWindow):
                 QMessageBox.warning(self, "Load Workspace", "Invalid workspace file format.")
                 return
 
-            idx = self.tabs.currentIndex()
-            if idx < 0:
-                self.add_new_tab()
-                idx = self.tabs.currentIndex()
-            tab = self.tabs.widget(idx)
-            if tab is None or not isinstance(tab, WorkspaceTab):
-                QMessageBox.warning(self, "Load Workspace", "Active workspace is invalid.")
-                return
-
-            # Name (ensure it's valid/unique)
-            name = data.get('workspace_name') or "Workspace"
-            valid = self.validate_workspace_name(name, exclude_index=idx)
-            if valid is not True:
-                # Try to make it unique by appending a counter
-                base = name
+            # Determine unique tab name BEFORE adding the tab
+            desired_name = data.get('workspace_name') or "Workspace"
+            name = desired_name
+            if self.validate_workspace_name(name) is not True:
+                # Try to make it acceptable/unique by appending a counter
+                base = desired_name or "Workspace"
                 counter = 2
                 while True:
                     candidate = f"{base} ({counter})"
-                    if self.validate_workspace_name(candidate, exclude_index=idx) is True:
+                    if self.validate_workspace_name(candidate) is True:
                         name = candidate
                         break
                     counter += 1
-            self.tabs.setTabText(idx, name)
 
-            # System params
-            sys_params = tab.sys_params
+            # Create a new workspace tab and select it
+            new_tab = WorkspaceTab()
+            new_index = self.tabs.addTab(new_tab, name)
+            self.tabs.setCurrentIndex(new_index)
+
+            # Populate system params
+            sys_params = new_tab.sys_params
             params = data.get('system_params', {})
             ft = params.get('field_type')
             if isinstance(ft, str):
-                # set combobox to matching text if present
                 cb = sys_params.field_type
                 idx_ft = cb.findText(ft)
                 if idx_ft >= 0:
@@ -228,9 +224,8 @@ class MainWindow(QMainWindow):
             except Exception:
                 pass
 
-            # Elements (rebuild linked list preserving order)
-            visualizer = tab.visualizer
-            # Clear current elements
+            # Populate elements (preserve order)
+            visualizer = new_tab.visualizer
             visualizer.head.next = None
             tail = visualizer.head
             for e in data.get('elements', []):
@@ -243,7 +238,10 @@ class MainWindow(QMainWindow):
                     elif etype == 'Lens':
                         node = ElementNode(ename, 'Lens', dist, focal_length=e.get('focal_length_mm'))
                     elif etype == 'Screen':
-                        node = ElementNode(ename, 'Screen', dist, is_range=bool(e.get('is_range', False)))
+                        is_range = bool(e.get('is_range', False))
+                        range_end = e.get('range_end_mm')
+                        steps = e.get('steps')
+                        node = ElementNode(ename, 'Screen', dist, is_range=is_range, range_end=range_end, steps=steps)
                     else:
                         continue
                     tail.next = node
@@ -252,7 +250,7 @@ class MainWindow(QMainWindow):
                     continue
             visualizer.refresh_table()
 
-            # Column widths
+            # Restore column widths
             widths = data.get('column_widths', [])
             header = visualizer.table.horizontalHeader()
             try:
@@ -263,7 +261,8 @@ class MainWindow(QMainWindow):
             except Exception:
                 pass
 
-            QMessageBox.information(self, "Load Workspace", f"Workspace loaded from:\n{file_path}")
+            # Normally do not display this message
+            # QMessageBox.information(self, "Load Workspace", f"Workspace loaded into new tab:\n{name}")
         except Exception as e:
             QMessageBox.critical(self, "Load Workspace", f"Failed to load workspace:\n{e}")
 

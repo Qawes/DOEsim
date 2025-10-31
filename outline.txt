@@ -43,6 +43,7 @@ MISC - resizing while calculating images hides "calculating" and shows previous 
      - rename distance to placement (?)
      - possibly add an option to use relative distances instead of placement - Add moving arrows to elements
      - add setting for auto highlighting all values when clicking into numberfields
+     - right clicking woekspace name should show contextmenu
 
 AI Model experience:
 - GPT 4.1 (free model) adequate, can code with very strict and explicit instructions

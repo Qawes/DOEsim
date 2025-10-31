@@ -123,7 +123,8 @@ def snapshot_elements(table):
             from PyQt6.QtWidgets import QCheckBox
             chk = val_cell.findChild(QCheckBox)
             if chk is not None:
-                entry['is_range'] = bool(chk.isChecked())
+                # Treat unchecked as None to keep snapshots compatible; True when checked
+                entry['is_range'] = True if chk.isChecked() else None
         elements.append(entry)
     return elements
 
