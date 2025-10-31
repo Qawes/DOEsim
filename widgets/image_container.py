@@ -29,7 +29,6 @@ class ImageContainer(QWidget):
 
     def _fetch_image(self):
         tab = self.parent()
-        # Traverse up to find WorkspaceTab
         from main_window import WorkspaceTab
         while tab and not isinstance(tab, WorkspaceTab):
             tab = tab.parent()
@@ -54,7 +53,7 @@ class ImageContainer(QWidget):
             side = "aperture"
         elif "Screen" in self.title:
             side = "screen"
-        arr = engine.calculate_random_image(
+        arr = engine.calculate_screen_images(
             FieldType=field_type,
             Wavelength=wavelength,
             ExtentX=extent_x,
@@ -62,7 +61,8 @@ class ImageContainer(QWidget):
             Resolution=resolution,
             Elements=elements,
             Backend=Backend,
-            side=side
+            side=side,
+            workspace_name=tab.get_workspace_name() if tab else "Workspace 1"
         )
         # Handle color or grayscale
         import numpy as np

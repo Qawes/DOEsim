@@ -3,7 +3,13 @@ diffractsim-main/
 
 # Ignore misc python files
 __pycache__/
-venv/
+.venv/
+
+# Ignore Pyinstaller misc files
 build/
 dist/
 main.exe
+main.spec
+
+# Ignore simulation results
+simulation_results/

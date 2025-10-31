@@ -6,12 +6,13 @@ from widgets.system_parameters_widget import DEFAULT_RESOLUTION_PX_PER_MM, DEFAU
 UpdateNameOnTypeChange = False
 
 class ElementNode:
-    def __init__(self, name, elem_type, distance, focal_length=None, aperture_path=None):
+    def __init__(self, name, elem_type, distance, focal_length=None, aperture_path=None, is_range=None):
         self.name = name
         self.type = elem_type
         self.distance = distance
         self.focal_length = focal_length
         self.aperture_path = aperture_path
+        self.is_range = is_range  # For screen elements - boolean indicating if it's a range of screens
         self.next: Optional[ElementNode] = None
 
 class PhysicalSetupVisualizer(QWidget):
@@ -35,6 +36,9 @@ class PhysicalSetupVisualizer(QWidget):
         self.add_lens_btn = QPushButton("Add Lens")
         self.add_lens_btn.clicked.connect(lambda: self.add_element("Lens"))
         btn_layout.addWidget(self.add_lens_btn)
+        self.add_screen_btn = QPushButton("Add Screen")
+        self.add_screen_btn.clicked.connect(lambda: self.add_element("Screen"))
+        btn_layout.addWidget(self.add_screen_btn)
         self.del_btn = QPushButton("Delete selected element(s)")
         self.del_btn.setEnabled(False)
         self.del_btn.clicked.connect(self.delete_selected_elements)
@@ -70,7 +74,7 @@ class PhysicalSetupVisualizer(QWidget):
                 self.table.setItem(idx, 1, type_item)
             else:
                 combo = QComboBox()
-                combo.addItems(["Aperture", "Lens"])
+                combo.addItems(["Aperture", "Lens", "Screen"])
                 combo.setCurrentText(node.type)
                 combo.currentTextChanged.connect(lambda t, nd=node: self._on_type_changed(nd, t))
                 self.table.setCellWidget(idx, 1, combo)
@@ -112,6 +116,12 @@ class PhysicalSetupVisualizer(QWidget):
                 f_spin.setSuffix(" mm")
                 f_spin.editingFinished.connect(lambda nd=node, w=f_spin: self._on_focal_length_edited(nd, w.value()))
                 self.table.setCellWidget(idx, 3, f_spin)
+            elif node.type == "Screen":
+                from PyQt6.QtWidgets import QCheckBox
+                range_checkbox = QCheckBox("Range of screens")
+                range_checkbox.setChecked(node.is_range or False)
+                range_checkbox.toggled.connect(lambda checked, nd=node: self._on_screen_range_edited(nd, checked))
+                self.table.setCellWidget(idx, 3, range_checkbox)
             node = node.next
             idx += 1
         self._update_delete_button_state()
@@ -137,9 +147,12 @@ class PhysicalSetupVisualizer(QWidget):
         if elem_type == "Aperture":
             name = f"Aperture {self._count_type('Aperture')+1}"
             new_node = ElementNode(name, "Aperture", last_distance+10, aperture_path=white_path)
-        else:
+        elif elem_type == "Lens":
             name = f"Lens {self._count_type('Lens')+1}"
             new_node = ElementNode(name, "Lens", last_distance+10, focal_length=80)
+        else:  # Screen
+            name = f"Screen {self._count_type('Screen')+1}"
+            new_node = ElementNode(name, "Screen", last_distance+10, is_range=False)
         node.next = new_node
         self.refresh_table()
 
@@ -156,13 +169,23 @@ class PhysicalSetupVisualizer(QWidget):
         node.name = new_name
 
     def _on_type_changed(self, node, new_type):
+        old_type = node.type
         node.type = new_type
+        
+        # Only set default values if this is a new element or if the specific value wasn't set before
         if new_type == "Aperture":
-            node.focal_length = None
-            node.aperture_path = ""
-        else:
-            node.focal_length = 80
-            node.aperture_path = None
+            # Set default aperture path only if it wasn't set before
+            if node.aperture_path is None:
+                node.aperture_path = ""
+        elif new_type == "Lens":
+            # Set default focal length only if it wasn't set before
+            if node.focal_length is None:
+                node.focal_length = 80
+        elif new_type == "Screen":
+            # Set default is_range only if it wasn't set before
+            if node.is_range is None:
+                node.is_range = False
+        
         self.refresh_table()
 
     def _on_distance_edited(self, node, new_distance):
@@ -235,12 +258,14 @@ class PhysicalSetupVisualizer(QWidget):
 
         self.refresh_table()
 
-
     def _on_focal_length_edited(self, node, new_f):
         node.focal_length = new_f
 
     def _on_aperture_path_edited(self, node, new_path):
         node.aperture_path = new_path
+
+    def _on_screen_range_edited(self, node, is_range):
+        node.is_range = is_range
 
     def _browse_aperture(self, node, path_edit):
         dlg = QFileDialog(self, "Select Aperture Bitmap", "", "Images (*.png *.jpg *.bmp)")
@@ -323,6 +348,8 @@ class PhysicalSetupVisualizer(QWidget):
                     params["height_mm"] = 1.0
             elif node.type == "Lens":
                 params["f"] = node.focal_length
+            elif node.type == "Screen":
+                params["is_range"] = node.is_range
             elements.append(engine.Element(distance=node.distance, element_type=node.type.lower(), params=params))
             node = node.next
         return elements
