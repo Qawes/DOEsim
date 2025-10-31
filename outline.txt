@@ -48,17 +48,18 @@ MISC - resizing while calculating images hides "calculating" and shows previous 
 AI Model experience:
 - GPT 4.1 (free model) adequate, can code with very strict and explicit instructions
 - Sonnet 4.5 (paid) Limited usage, due to frequent slowdowns / loops. For every edit it goes aroud multiple times for a file, always forgetting newlines. Maybe Python language issue? Creates lots of files, tries to run cmd scripts, even if explicitly told not to.
-- GPT 5 (paid)
+- GPT 5 (paid) Slow, sometimes takes really long, not too verbose with every step its doing. Usually manages to solve the query, doesnt generate infinite files. Just invisible (positive)
 
-GUI tests: in order:
-- create new workspace and rename it (Testing)
-- close old default workspace (Workspace 1)
-- change wavelength to 440, extents to 6mm, resolution to 128
+GUI tests in order:
+- create new workspace and rename it to TESTING_TAB_NAME. Close old default workspace (Workspace 1). Check if right tab remained open, and only one
+- change field type, wavelength, extents, resolution. check whether all of them changed to their respective DEFAULT values
 - add an aperture, a lens, and a screen, then one-by-one delete them
 - add an aperture, a lens, and a screen, then delete them all at once by selecting them with their table index
-- add an aperture, rename it to fzpelem, change distance to 0.01, change image to "aperatures\20250320 00_11_58 manual pattern.png"
+- add an aperture, rename it to fzpelem, change distance to 0.01, change image to "\♥aperatures\20250320 00_11_58 manual pattern.png"
 - add lens, rename it to gyujto, change distance to 3, change focus to 800
 - add screen, rename it to lemezkep, change distance to 0.01
 - add screen, rename to lencsekep, change distance to 1000
 - add screen, rename to kep, change distance to 1000, delete screen lencsekep
+- load Scene_1 into memory, check if all elements and system parameters match 
+- add an aperture, rename it to white, set distance to 0.01. add a lens named fokusz, distance 0.01, focal length 30. add a screen named initial distance 0.01. add a screen named logitudinal distance from 1 to 100 in 15 steps. rename workspace to Generated_1 and save (overwrite if necessary). check if exported json matches manually prepared one (Scene_2)
 - click solve button under screen
