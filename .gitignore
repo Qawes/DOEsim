@@ -13,3 +13,4 @@ main.spec
 
 # Ignore simulation results
 simulation_results/
+workspaces/

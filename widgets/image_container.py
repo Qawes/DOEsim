@@ -65,19 +65,33 @@ class ImageContainer(QWidget):
             workspace_name=tab.get_workspace_name() if tab else "Workspace 1"
         )
         # Handle color or grayscale
-        import numpy as np
-        if isinstance(arr, np.ndarray):
+        image = QImage()
+        try:
+            arr = np.asarray(arr)
+        except Exception:
+            arr = None
+        if arr is not None and hasattr(arr, "ndim"):
             if arr.ndim == 3 and arr.shape[2] == 3:
-                h, w, c = arr.shape
-                qimg = QImage(arr.data, w, h, 3 * w, QImage.Format.Format_RGB888)
-            elif arr.ndim == 2 and len(arr.shape) == 2:
-                h, w = arr.shape
-                qimg = QImage(arr.data, w, h, w, QImage.Format.Format_Grayscale8)
-            else:
-                qimg = QImage()
-        else:
-            qimg = QImage()
-        pixmap = QPixmap.fromImage(qimg)
+                h = int(arr.shape[0])
+                w = int(arr.shape[1])
+                if arr.dtype != np.uint8:
+                    arr = (255 * np.clip(arr, 0, 1)).astype(np.uint8)
+                if not arr.flags["C_CONTIGUOUS"]:
+                    arr = np.ascontiguousarray(arr)
+                bytes_per_line = 3 * w
+                image = QImage(arr.data, w, h, bytes_per_line, QImage.Format.Format_RGB888)
+                self._last_image_array = arr
+            elif arr.ndim == 2:
+                h = int(arr.shape[0])
+                w = int(arr.shape[1])
+                if arr.dtype != np.uint8:
+                    arr = (255 * np.clip(arr, 0, 1)).astype(np.uint8)
+                if not arr.flags["C_CONTIGUOUS"]:
+                    arr = np.ascontiguousarray(arr)
+                bytes_per_line = w
+                image = QImage(arr.data, w, h, bytes_per_line, QImage.Format.Format_Grayscale8)
+                self._last_image_array = arr
+        pixmap = QPixmap.fromImage(image)
         self._pixmap = pixmap
         self._update_image_async()
 

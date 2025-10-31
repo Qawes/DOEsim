@@ -1,4 +1,4 @@
-from PyQt6.QtWidgets import QMainWindow, QTabWidget, QSplitter, QVBoxLayout, QMessageBox, QMenuBar, QMenu, QWidget, QInputDialog, QLineEdit
+from PyQt6.QtWidgets import QMainWindow, QTabWidget, QSplitter, QVBoxLayout, QMessageBox, QMenuBar, QMenu, QWidget, QInputDialog, QLineEdit, QFileDialog
 from PyQt6.QtCore import Qt
 from widgets.system_parameters_widget import SystemParametersWidget
 from widgets.physical_setup_visualizer import PhysicalSetupVisualizer
@@ -72,8 +72,8 @@ class MainWindow(QMainWindow):
         file_menu = QMenu("File", self)
         menubar.addMenu(file_menu)
         file_menu.addAction("New", self.add_new_tab)
-        file_menu.addAction("Save", self.not_implemented)
-        file_menu.addAction("Load", self.not_implemented)
+        file_menu.addAction("Save", self.save_workspace)
+        file_menu.addAction("Load", self.load_workspace)
         edit_menu = QMenu("Edit", self)
         menubar.addMenu(edit_menu)
         edit_menu.addAction("Options", self.not_implemented)
@@ -81,6 +81,191 @@ class MainWindow(QMainWindow):
         menubar.addMenu(help_menu)
         help_menu.addAction("Help", self.not_implemented)
         help_menu.addAction("About", self.show_about)
+
+    def save_workspace(self):
+        """Save the active workspace to a JSON file (name, params, elements, order, column widths)."""
+        try:
+            import json
+            import os
+            # Active tab and name
+            idx = self.tabs.currentIndex()
+            if idx < 0:
+                QMessageBox.information(self, "Save Workspace", "No active workspace to save.")
+                return
+            tab = self.tabs.widget(idx)
+            if tab is None or not isinstance(tab, WorkspaceTab):
+                QMessageBox.warning(self, "Save Workspace", "Active workspace is invalid.")
+                return
+            workspace_name = self.tabs.tabText(idx)
+
+            # System params
+            sys_params = tab.sys_params
+            params = {
+                'field_type': sys_params.field_type.currentText(),
+                'wavelength_nm': float(sys_params.wavelength.value()),
+                'extent_x_mm': float(sys_params.extension_x.value()),
+                'extent_y_mm': float(sys_params.extension_y.value()),
+                'resolution_px_per_mm': float(sys_params.resolution.value()),
+            }
+
+            # Elements (preserve order)
+            visualizer = tab.visualizer
+            elements = []
+            node = getattr(visualizer, 'head', None)
+            node = node.next if node is not None else None  # skip light source
+            while node is not None:
+                entry = {
+                    'name': node.name,
+                    'type': node.type,
+                    'distance_mm': float(node.distance),
+                }
+                if node.type == 'Lens':
+                    entry['focal_length_mm'] = float(node.focal_length) if node.focal_length is not None else None
+                elif node.type == 'Aperture':
+                    entry['aperture_path'] = node.aperture_path or ""
+                elif node.type == 'Screen':
+                    entry['is_range'] = bool(node.is_range) if node.is_range is not None else False
+                elements.append(entry)
+                node = node.next
+
+            # Column widths
+            table = visualizer.table
+            header = table.horizontalHeader()
+            col_widths = []
+            if header is not None:
+                for i in range(table.columnCount()):
+                    col_widths.append(int(header.sectionSize(i)))
+
+            data = {
+                'workspace_name': workspace_name,
+                'system_params': params,
+                'elements': elements,
+                'column_widths': col_widths,
+                'saved_at': __import__('datetime').datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                'app': 'Diffractsim GUI',
+                'version': '1.0',
+            }
+
+            # Choose file path
+            default_dir = os.path.join(os.getcwd(), 'workspaces')
+            os.makedirs(default_dir, exist_ok=True)
+            suggested = os.path.join(default_dir, f"{workspace_name}.json")
+            file_path, _ = QFileDialog.getSaveFileName(self, "Save Workspace", suggested, "Workspace Files (*.json)")
+            if not file_path:
+                return
+            # Ensure .json extension
+            if not file_path.lower().endswith('.json'):
+                file_path += '.json'
+
+            with open(file_path, 'w', encoding='utf-8') as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+
+            QMessageBox.information(self, "Save Workspace", f"Workspace saved to:\n{file_path}")
+        except Exception as e:
+            QMessageBox.critical(self, "Save Workspace", f"Failed to save workspace:\n{e}")
+
+    def load_workspace(self):
+        """Load a workspace JSON into the active tab (name, params, elements, order, column widths)."""
+        try:
+            import json
+            import os
+            from widgets.physical_setup_visualizer import ElementNode
+
+            # Pick file
+            default_dir = os.path.join(os.getcwd(), 'workspaces')
+            os.makedirs(default_dir, exist_ok=True)
+            file_path, _ = QFileDialog.getOpenFileName(self, "Load Workspace", default_dir, "Workspace Files (*.json)")
+            if not file_path:
+                return
+
+            with open(file_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+
+            # Validate structure lightly
+            if not isinstance(data, dict):
+                QMessageBox.warning(self, "Load Workspace", "Invalid workspace file format.")
+                return
+
+            idx = self.tabs.currentIndex()
+            if idx < 0:
+                self.add_new_tab()
+                idx = self.tabs.currentIndex()
+            tab = self.tabs.widget(idx)
+            if tab is None or not isinstance(tab, WorkspaceTab):
+                QMessageBox.warning(self, "Load Workspace", "Active workspace is invalid.")
+                return
+
+            # Name (ensure it's valid/unique)
+            name = data.get('workspace_name') or "Workspace"
+            valid = self.validate_workspace_name(name, exclude_index=idx)
+            if valid is not True:
+                # Try to make it unique by appending a counter
+                base = name
+                counter = 2
+                while True:
+                    candidate = f"{base} ({counter})"
+                    if self.validate_workspace_name(candidate, exclude_index=idx) is True:
+                        name = candidate
+                        break
+                    counter += 1
+            self.tabs.setTabText(idx, name)
+
+            # System params
+            sys_params = tab.sys_params
+            params = data.get('system_params', {})
+            ft = params.get('field_type')
+            if isinstance(ft, str):
+                # set combobox to matching text if present
+                cb = sys_params.field_type
+                idx_ft = cb.findText(ft)
+                if idx_ft >= 0:
+                    cb.setCurrentIndex(idx_ft)
+            try:
+                sys_params.wavelength.setValue(float(params.get('wavelength_nm', sys_params.wavelength.value())))
+                sys_params.extension_x.setValue(float(params.get('extent_x_mm', sys_params.extension_x.value())))
+                sys_params.extension_y.setValue(float(params.get('extent_y_mm', sys_params.extension_y.value())))
+                sys_params.resolution.setValue(float(params.get('resolution_px_per_mm', sys_params.resolution.value())))
+            except Exception:
+                pass
+
+            # Elements (rebuild linked list preserving order)
+            visualizer = tab.visualizer
+            # Clear current elements
+            visualizer.head.next = None
+            tail = visualizer.head
+            for e in data.get('elements', []):
+                try:
+                    etype = e.get('type')
+                    ename = e.get('name') or f"{etype}"
+                    dist = float(e.get('distance_mm', 0.0))
+                    if etype == 'Aperture':
+                        node = ElementNode(ename, 'Aperture', dist, aperture_path=e.get('aperture_path') or "")
+                    elif etype == 'Lens':
+                        node = ElementNode(ename, 'Lens', dist, focal_length=e.get('focal_length_mm'))
+                    elif etype == 'Screen':
+                        node = ElementNode(ename, 'Screen', dist, is_range=bool(e.get('is_range', False)))
+                    else:
+                        continue
+                    tail.next = node
+                    tail = node
+                except Exception:
+                    continue
+            visualizer.refresh_table()
+
+            # Column widths
+            widths = data.get('column_widths', [])
+            header = visualizer.table.horizontalHeader()
+            try:
+                if header is not None:
+                    for i, w in enumerate(widths):
+                        if i < visualizer.table.columnCount():
+                            header.resizeSection(i, int(w))
+            except Exception:
+                pass
+
+            QMessageBox.information(self, "Load Workspace", f"Workspace loaded from:\n{file_path}")
+        except Exception as e:
+            QMessageBox.critical(self, "Load Workspace", f"Failed to load workspace:\n{e}")
 
     def add_new_tab(self):
         tab = WorkspaceTab()
