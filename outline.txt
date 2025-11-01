@@ -22,28 +22,18 @@ FEAT - add fifth column (another value)
      - for screens first value is is it range or single
      - for screens second value is two numbers: length, and interval between screens
 
-FEAT - add screen as an element into table, and handle it in engine
-     - this means the screen image area needs to have a way to switch between the different screens
-     - single screens obv means a png, range means gif / mp4
-
 MISC - resizing while calculating images hides "calculating" and shows previous image (pr text)
      - make polychromatic selection text unavailable
-     - add closing button to workspace tabs
-     - add renaming option to workspace tabs
      - some numberfield should allow for zero values
      - numberfields with a non zero minimum should jump to a whole integer from minimum value (eg. 0.01 -> 1, not 0.01 -> 1.01)
-     - disable scrollwheel in elements table, add this to Options, by column
-     - make table row numbers start at 0
-     - make table number column wider
-     - add generate names when type changes boolean to options
-     - add deletion warning boolean to options
-     - add option for replacing os.getcwd() with a permanent path
-     - add defaults for monochromatic, wwavelength, extents, resolution
-     - add default element offset (10mm) to options
-     - rename distance to placement (?)
      - possibly add an option to use relative distances instead of placement - Add moving arrows to elements
-     - add setting for auto highlighting all values when clicking into numberfields
      - right clicking woekspace name should show contextmenu
+     - fix table coolumn width annoyance -> use qsettings save geometry
+     - element nme change should be in sync wit hthe add element naming system (numbering)
+     - MAKE PHYS VIS SETUP SCRIPT MORE CONCISE, REMOVE BLOAT
+     - simulation should not run when aperture with empty path is present
+     - preferences window should close when main window is closed
+
 
 AI Model experience:
 - GPT 4.1 (free model) adequate, can code with very strict and explicit instructions
@@ -63,3 +53,14 @@ GUI tests in order:
 - load Scene_1 into memory, check if all elements and system parameters match 
 - add an aperture, rename it to white, set distance to 0.01. add a lens named fokusz, distance 0.01, focal length 30. add a screen named initial distance 0.01. add a screen named logitudinal distance from 1 to 100 in 15 steps. rename workspace to Generated_1 and save (overwrite if necessary). check if exported json matches manually prepared one (Scene_2)
 - click solve button under screen
+
+Preferences:
++ Auto open new workspace when last is closed
++ ask before closing workspaces
++ display confirmation os saving workspaces
++ enable scrollwheel in elements table to modify dropboxes and spinboxes
++ select all text when clicking into inputfield
++ change element name when changing its type (only if name is the default generated one)
++ warn before deleting elements
++ use relative paths
++ default distance between elements when adding them to the table

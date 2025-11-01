@@ -1,9 +1,14 @@
-from PyQt6.QtWidgets import QMainWindow, QTabWidget, QSplitter, QVBoxLayout, QMessageBox, QMenuBar, QMenu, QWidget, QInputDialog, QLineEdit, QFileDialog
+from PyQt6.QtWidgets import QMainWindow, QTabWidget, QSplitter, QVBoxLayout, QMessageBox, QMenuBar, QMenu, QWidget, QInputDialog, QLineEdit, QFileDialog, QLabel, QStackedWidget
 from PyQt6.QtCore import Qt
 from widgets.system_parameters_widget import SystemParametersWidget
 from widgets.physical_setup_visualizer import PhysicalSetupVisualizer
 from widgets.image_container import ImageContainer
+from widgets.preferences_window import PreferencesWindow, getpref
 import re
+
+AutoAddNewTabOnEmpty = False # TODO: make this a settings option
+ShowWorkspaceClosingConfirmation = True  # TODO: make this a settings option
+ShowWorkspaceSaveLoadConfirmation = True  # TODO: make this a settings option
 
 class WorkspaceTab(QWidget):
     def __init__(self, parent=None):
@@ -59,12 +64,24 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("Diffractsim GUI Proof of Concept")
         self.resize(1200, 800)
         self._createMenuBar()
+        # Central stacked widget: placeholder when no tabs, tabs when present
+        self._central_stack = QStackedWidget(self)
+        self._placeholder = QLabel("<i>No workspace open. Use File \u203a New to create a workspace.</i>")
+        self._placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._placeholder.setWordWrap(True)
+        # Apply default-dependent globals from preferences
+        self._apply_default_distance(getpref('default_element_offset_mm'))
+
         self.tabs = QTabWidget()
         self.tabs.setTabsClosable(True)  # Enable close buttons on tabs
         self.tabs.tabCloseRequested.connect(self.close_tab)
         self.tabs.tabBarDoubleClicked.connect(self.rename_tab)
-        self.setCentralWidget(self.tabs)
+        self._central_stack.addWidget(self._placeholder)
+        self._central_stack.addWidget(self.tabs)
+        self.setCentralWidget(self._central_stack)
+        # Start with a default tab, then update placeholder visibility
         self.add_new_tab()
+        self._update_empty_placeholder()
 
     def _createMenuBar(self):
         menubar = QMenuBar(self)
@@ -76,7 +93,7 @@ class MainWindow(QMainWindow):
         file_menu.addAction("Load", self.load_workspace)
         edit_menu = QMenu("Edit", self)
         menubar.addMenu(edit_menu)
-        edit_menu.addAction("Options", self.not_implemented)
+        edit_menu.addAction("Preferences", self.open_preferences_tab)
         help_menu = QMenu("Help", self)
         menubar.addMenu(help_menu)
         help_menu.addAction("Help", self.not_implemented)
@@ -162,7 +179,8 @@ class MainWindow(QMainWindow):
             with open(file_path, 'w', encoding='utf-8') as f:
                 json.dump(data, f, indent=2, ensure_ascii=False)
 
-            QMessageBox.information(self, "Save Workspace", f"Workspace saved to:\n{file_path}")
+            if bool(getpref('confirm_on_save')):
+                QMessageBox.information(self, "Save Workspace", f"Workspace saved to:\n{file_path}")
         except Exception as e:
             QMessageBox.critical(self, "Save Workspace", f"Failed to save workspace:\n{e}")
 
@@ -206,6 +224,7 @@ class MainWindow(QMainWindow):
             new_tab = WorkspaceTab()
             new_index = self.tabs.addTab(new_tab, name)
             self.tabs.setCurrentIndex(new_index)
+            self._update_empty_placeholder()
 
             # Populate system params
             sys_params = new_tab.sys_params
@@ -269,28 +288,39 @@ class MainWindow(QMainWindow):
     def add_new_tab(self):
         tab = WorkspaceTab()
         self.tabs.addTab(tab, f"Workspace {self.tabs.count() + 1}")
+        self._update_empty_placeholder()
     
     def close_tab(self, index):
         """Close a tab with confirmation if it's the last tab"""
+        ask = bool(getpref('ask_before_closing'))
         if self.tabs.count() <= 1:
-            reply = QMessageBox.question(
-                self,
-                "Close Workspace",
-                "This is the last workspace. Closing it will create a new empty workspace. Continue?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-            )
-            if reply == QMessageBox.StandardButton.Yes:
+            proceed = True
+            if ask:
+                reply = QMessageBox.question(
+                    self,
+                    "Close Workspace",
+                    "This is the last workspace. Closing it will create a new empty workspace. Continue?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+                )
+                proceed = reply == QMessageBox.StandardButton.Yes
+            if proceed:
                 self.tabs.removeTab(index)
-                self.add_new_tab()  # Add a new tab to replace the closed one
+                if bool(getpref('auto_open_new_workspace')):
+                    self.add_new_tab()
+                self._update_empty_placeholder()
         else:
-            reply = QMessageBox.question(
-                self,
-                "Close Workspace",
-                f"Are you sure you want to close '{self.tabs.tabText(index)}'?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-            )
-            if reply == QMessageBox.StandardButton.Yes:
+            proceed = True
+            if ask:
+                reply = QMessageBox.question(
+                    self,
+                    "Close Workspace",
+                    f"Are you sure you want to close '{self.tabs.tabText(index)}'?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+                )
+                proceed = reply == QMessageBox.StandardButton.Yes
+            if proceed:
                 self.tabs.removeTab(index)
+                self._update_empty_placeholder()
     
     def rename_tab(self, index):
         """Rename a tab by double-clicking on it"""
@@ -342,6 +372,32 @@ class MainWindow(QMainWindow):
                 return f"A workspace with the name '{name}' already exists."
         
         return True
+
+    def _update_empty_placeholder(self):
+        """Show an italic hint when there are no workspace tabs; otherwise show tabs."""
+        if self.tabs.count() == 0:
+            self._central_stack.setCurrentWidget(self._placeholder)
+        else:
+            self._central_stack.setCurrentWidget(self.tabs)
+
+    def open_preferences_tab(self):
+        """Open the Preferences window (standalone), creating it if necessary."""
+        # Reuse existing window if open
+        win = getattr(self, "_preferences_window", None)
+        if win is not None and hasattr(win, 'isVisible') and win.isVisible():
+            win.activateWindow()
+            win.raise_()
+            return
+        # Create and show
+        self._preferences_window = PreferencesWindow(self)
+        self._preferences_window.show()
+
+    def _apply_default_distance(self, val: float):
+        try:
+            import widgets.physical_setup_visualizer as psv
+            psv.GLOBAL_DEFAULT_DISTANCE_MM = float(val)
+        except Exception:
+            pass
 
     def not_implemented(self):
         QMessageBox.information(self, "Not implemented", "This feature is not implemented in the proof of concept.")

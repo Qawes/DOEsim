@@ -1,13 +1,15 @@
 from PyQt6.QtWidgets import QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QWidget, QTableWidget, QTableWidgetItem, QComboBox, QDoubleSpinBox, QHeaderView, QFileDialog, QLineEdit, QStackedLayout, QMessageBox, QCheckBox, QSpinBox
-from PyQt6.QtCore import Qt, QSettings
+from PyQt6.QtCore import Qt, QSettings, QEvent, QTimer
 from typing import Optional
 from widgets.system_parameters_widget import DEFAULT_RESOLUTION_PX_PER_MM, DEFAULT_EXTENSION_Y_MM, DEFAULT_EXTENSION_X_MM, DEFAULT_WAVELENGTH_NM
+from widgets.preferences_window import PreferencesTab, PreferencesWindow, getpref
 
 UpdateNameOnTypeChange = False
 GLOBAL_MINIMUM_DISTANCE_MM = 0.01
 GLOBAL_MAXIMUM_DISTANCE_MM = 100000.0
 GLOBAL_DEFAULT_DISTANCE_MM = 10.0
 LENS_DEFAULT_FOCUS_MM = 1000.0
+GLOBAL_DISTANCE_TEXT = "Placement"
 
 class ElementNode:
     def __init__(self, name, elem_type, distance, focal_length=None, aperture_path=None, is_range=None, range_end=None, steps=None):
@@ -26,12 +28,13 @@ class PhysicalSetupVisualizer(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.settings = QSettings("diffractsim", "PhysicalSetupVisualizer")
+        # TODO: please make sure to utilize the getpref function imported from preferences_window.py to read user preferences, instead of implementing an own one
         layout = QVBoxLayout(self)
         label = QLabel("<b>Physical Setup</b>")
         label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(label)
         self.table = QTableWidget(0, 4)
-        self.table.setHorizontalHeaderLabels(["Name", "Element type", "Distance (mm)", "Value (type dependent)"])
+        self.table.setHorizontalHeaderLabels(["Name", "Element type", f"{GLOBAL_DISTANCE_TEXT} (mm)", "Value (type dependent)"])
         header = self.table.horizontalHeader()
         if header is not None:
             header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
@@ -59,7 +62,62 @@ class PhysicalSetupVisualizer(QWidget):
         self.table.itemSelectionChanged.connect(self._update_delete_button_state)
         self.refresh_table()
 
-    def _find_row_for_node(self, target) -> int | None:
+    def refresh_aperture_path_display(self):
+        """Refresh only the aperture path editors to reflect current path preference."""
+        self._rewrite_aperture_paths_in_table()
+
+    # Event filtering to support preferences (wheel disable, select-all on focus)
+    def eventFilter(self, a0, a1):
+        et = a1.type() if a1 is not None else None
+        if et == QEvent.Type.Wheel:
+            # Optionally disable scrollwheel for spinboxes and combos within the table
+            if not bool(getpref('enable_scrollwheel')):
+                if isinstance(a0, (QDoubleSpinBox, QSpinBox, QComboBox)):
+                    return True  # consume
+        elif et == QEvent.Type.FocusIn:
+            if bool(getpref('select_all_on_focus')): # TODO: does not actually select text in qdoublespinboxes
+                if isinstance(a0, QLineEdit):
+                    a0.selectAll()
+                elif isinstance(a0, (QDoubleSpinBox, QSpinBox)):
+                    # Improve reliability by using the spinbox's lineEdit() and selecting after focus with a singleshot
+                    try:
+                        le = a0.lineEdit()  # QAbstractSpinBox provides this
+                        if le is not None:
+                            QTimer.singleShot(0, le.selectAll)
+                    except Exception:
+                        pass
+        return super().eventFilter(a0, a1)
+
+    def _use_relative_paths(self) -> bool:
+        # TODO: use the imported getpref function. Changing this setting should immediately change the paths in the table.
+        return bool(getpref('use_relative_paths'))
+
+    def _to_pref_path(self, path: str) -> str:
+        import os
+        if not path:
+            return path
+        if self._use_relative_paths():
+            try:
+                return os.path.relpath(path, os.getcwd())
+            except Exception:
+                return path
+        return path
+
+    def _abs_path(self, path: Optional[str]) -> Optional[str]:
+        import os
+        if not path:
+            return path
+        try:
+            return path if os.path.isabs(path) else os.path.abspath(path)
+        except Exception:
+            return path
+
+    def _normalize_aperture_display_path(self, stored_path: Optional[str]) -> str:
+        # Always display according to current preference, regardless of how it is stored
+        ap = self._abs_path(stored_path)
+        return self._to_pref_path(ap) if ap else ""
+
+    def _find_row_for_node(self, target) -> Optional[int]:
         """Return table row index for a given node, or None if not found."""
         row = 0
         cur = self.head
@@ -78,6 +136,8 @@ class PhysicalSetupVisualizer(QWidget):
             hl.setContentsMargins(0, 0, 0, 0)
             from_lbl = QLabel("From:", dist_widget)
             dist_from = QDoubleSpinBox(dist_widget)
+            # Install event filter for preferences
+            dist_from.installEventFilter(self)
             dist_from.setRange(GLOBAL_MINIMUM_DISTANCE_MM, GLOBAL_MAXIMUM_DISTANCE_MM)
             dist_from.setDecimals(3)
             dist_from.setSuffix(" mm")
@@ -85,6 +145,8 @@ class PhysicalSetupVisualizer(QWidget):
             dist_from.editingFinished.connect(lambda nd=node, w=dist_from: self._on_distance_edited(nd, w.value()))
             to_lbl = QLabel("To:", dist_widget)
             dist_to = QDoubleSpinBox(dist_widget)
+            # Install event filter for preferences
+            dist_to.installEventFilter(self)
             dist_to.setRange(GLOBAL_MINIMUM_DISTANCE_MM, GLOBAL_MAXIMUM_DISTANCE_MM)
             dist_to.setDecimals(3)
             dist_to.setSuffix(" mm")
@@ -97,6 +159,7 @@ class PhysicalSetupVisualizer(QWidget):
             return dist_widget
         else:
             dist_spin = QDoubleSpinBox(self.table)
+            dist_spin.installEventFilter(self)
             dist_spin.setRange(GLOBAL_MINIMUM_DISTANCE_MM, GLOBAL_MAXIMUM_DISTANCE_MM)
             dist_spin.setDecimals(2)
             dist_spin.setValue(node.distance)
@@ -117,6 +180,7 @@ class PhysicalSetupVisualizer(QWidget):
                 self.table.setItem(idx, 0, name_item)
             else:
                 name_edit = QLineEdit(node.name)
+                name_edit.installEventFilter(self)
                 name_edit.editingFinished.connect(lambda n=name_edit, nd=node: self._on_name_edited(nd, n.text()))
                 self.table.setCellWidget(idx, 0, name_edit)
             # Type
@@ -128,6 +192,7 @@ class PhysicalSetupVisualizer(QWidget):
                 combo = QComboBox()
                 combo.addItems(["Aperture", "Lens", "Screen"])
                 combo.setCurrentText(node.type)
+                combo.installEventFilter(self)
                 combo.currentTextChanged.connect(lambda t, nd=node: self._on_type_changed(nd, t))
                 self.table.setCellWidget(idx, 1, combo)
             # Distance
@@ -140,6 +205,7 @@ class PhysicalSetupVisualizer(QWidget):
                     self.table.setCellWidget(idx, 2, self._build_screen_distance_widget(node))
                 else:
                     dist_spin = QDoubleSpinBox(self.table)
+                    dist_spin.installEventFilter(self)
                     dist_spin.setRange(GLOBAL_MINIMUM_DISTANCE_MM, GLOBAL_MAXIMUM_DISTANCE_MM)
                     dist_spin.setDecimals(2)
                     dist_spin.setValue(node.distance)
@@ -155,7 +221,9 @@ class PhysicalSetupVisualizer(QWidget):
                 path_widget = QWidget(self.table)
                 path_layout = QHBoxLayout(path_widget)
                 path_layout.setContentsMargins(0, 0, 0, 0)
-                path_edit = QLineEdit(node.aperture_path or "", path_widget)
+                # Normalize path display to current preference
+                path_edit = QLineEdit(self._normalize_aperture_display_path(node.aperture_path), path_widget)
+                path_edit.installEventFilter(self)
                 browse_btn = QPushButton("...", path_widget)
                 browse_btn.setFixedWidth(28)
                 browse_btn.clicked.connect(lambda _=None, nd=node, pe=path_edit: self._browse_aperture(nd, pe))
@@ -165,6 +233,7 @@ class PhysicalSetupVisualizer(QWidget):
                 self.table.setCellWidget(idx, 3, path_widget)
             elif node.type == "Lens":
                 f_spin = QDoubleSpinBox(self.table)
+                f_spin.installEventFilter(self)
                 f_spin.setRange(GLOBAL_MINIMUM_DISTANCE_MM, GLOBAL_MAXIMUM_DISTANCE_MM)
                 f_spin.setDecimals(2)
                 f_spin.setValue(node.focal_length or LENS_DEFAULT_FOCUS_MM)
@@ -179,6 +248,7 @@ class PhysicalSetupVisualizer(QWidget):
                 range_checkbox.setChecked(bool(node.is_range))
                 steps_label = QLabel("steps:", value_widget)
                 steps_spin = QSpinBox(value_widget)
+                steps_spin.installEventFilter(self)
                 steps_spin.setRange(2, 10000)
                 steps_spin.setValue(int(node.steps or 10))
                 steps_label.setVisible(bool(node.is_range))
@@ -214,7 +284,8 @@ class PhysicalSetupVisualizer(QWidget):
         last_distance = node.distance
         if elem_type == "Aperture":
             name = f"Aperture {self._count_type('Aperture')+1}"
-            new_node = ElementNode(name, "Aperture", last_distance + GLOBAL_DEFAULT_DISTANCE_MM, aperture_path=white_path)
+            stored_path = self._to_pref_path(white_path)
+            new_node = ElementNode(name, "Aperture", last_distance + GLOBAL_DEFAULT_DISTANCE_MM, aperture_path=stored_path)
         elif elem_type == "Lens":
             name = f"Lens {self._count_type('Lens')+1}"
             new_node = ElementNode(name, "Lens", last_distance + GLOBAL_DEFAULT_DISTANCE_MM, focal_length=LENS_DEFAULT_FOCUS_MM)
@@ -233,12 +304,56 @@ class PhysicalSetupVisualizer(QWidget):
             node = node.next
         return count
 
+    def _is_default_generated_name(self, node: 'ElementNode') -> bool:
+        import re as _re
+        m = _re.match(r'^(Aperture|Lens|Screen)\s+(\d+)$', str(node.name))
+        return m is not None
+
+    def _make_unique_name(self, base: str) -> str:
+        existing = set()
+        cur = self.head
+        while cur is not None:
+            existing.add(cur.name)
+            cur = cur.next
+        if base not in existing:
+            return base
+        # Append next index
+        idx = 2
+        candidate = f"{base} ({idx})"
+        while candidate in existing:
+            idx += 1
+            candidate = f"{base} ({idx})"
+        return candidate
+
+    def _name_exists(self, name: str, exclude: Optional['ElementNode'] = None) -> bool:
+        cur = self.head
+        while cur is not None:
+            if cur is not exclude and cur.name == name:
+                return True
+            cur = cur.next
+        return False
+
     def _on_name_edited(self, node, new_name):
         node.name = new_name
 
     def _on_type_changed(self, node, new_type):
+        # TODO: if the setting is enabled, rename any default element names eg: "Aperture 2" to "Lens 2" when changing type. You should just replace the Lens string to Aperture. BUT if it would result in a non-unique name, abort the renaming! renaming element to a non-unique name should ALWAYS be run against the unique name check, and aborted (silently) if it would result in a non-unique name.
         old_type = node.type
         node.type = new_type
+        
+        # Rename element if preference enabled and current name is default-generated
+        try:
+            if bool(getpref('rename_on_type_change')) and self._is_default_generated_name(node):
+                import re as _re
+                m = _re.match(r'^(Aperture|Lens|Screen)\s+(\d+)$', str(node.name))
+                if m:
+                    suffix = m.group(2)
+                    desired = f"{new_type} {suffix}"
+                    # Abort renaming if it would not be unique
+                    if not self._name_exists(desired, exclude=node):
+                        node.name = desired
+        except Exception:
+            pass
         
         # Only set default values if this is a new element or if the specific value wasn't set before
         if new_type == "Aperture":
@@ -277,7 +392,7 @@ class PhysicalSetupVisualizer(QWidget):
             prev = cur
             cur = cur.next
         if cur is node:
-            assert cur is not None # TODO: what is this
+            assert cur is not None 
             prev.next = cur.next
             cur.next = None  # detach to avoid accidental cycles
 
@@ -330,7 +445,12 @@ class PhysicalSetupVisualizer(QWidget):
         node.focal_length = new_f
 
     def _on_aperture_path_edited(self, node, new_path):
-        node.aperture_path = new_path
+        # Store path according to current preference
+        from os.path import abspath
+        try:
+            node.aperture_path = self._to_pref_path(abspath(new_path))
+        except Exception:
+            node.aperture_path = self._to_pref_path(new_path)
 
     def _on_screen_range_edited(self, node, is_range, steps_label, steps_spin):
         node.is_range = is_range
@@ -356,8 +476,10 @@ class PhysicalSetupVisualizer(QWidget):
         if dlg.exec():
             files = dlg.selectedFiles()
             if files:
-                node.aperture_path = files[0]
-                path_edit.setText(files[0])
+                stored = self._to_pref_path(files[0])
+                node.aperture_path = stored
+                # Display normalized according to current preference
+                path_edit.setText(self._normalize_aperture_display_path(node.aperture_path))
 
     def _update_delete_button_state(self):
         # Always keep delete enabled; the handler checks for valid selection.
@@ -383,18 +505,20 @@ class PhysicalSetupVisualizer(QWidget):
             row_idx += 1
 
         # Build confirmation message with stable ordering by row number
-        lines = [f"Element {r}: {row_to_node[r].name}" for r in valid_rows if r in row_to_node]
-        msg = (
-            f"Are you sure you want to delete {len(lines)} element(s)?\n\n" + "\n".join(lines)
-        )
-        reply = QMessageBox.question(
-            self,
-            "Delete elements",
-            msg,
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-        )
-        if reply != QMessageBox.StandardButton.Yes:
-            return
+        confirm = bool(getpref('warn_before_delete'))
+        if confirm:
+            lines = [f"Element {r}: {row_to_node[r].name}" for r in valid_rows if r in row_to_node]
+            msg = (
+                f"Are you sure you want to delete {len(lines)} element(s)?\n\n" + "\n".join(lines)
+            )
+            reply = QMessageBox.question(
+                self,
+                "Delete elements",
+                msg,
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return
 
         # Robust deletion: rebuild the linked list excluding selected nodes
         to_delete = set(row_to_node.values())
@@ -410,6 +534,23 @@ class PhysicalSetupVisualizer(QWidget):
                 cur = cur.next
 
         self.refresh_table()
+
+    def _rewrite_aperture_paths_in_table(self):
+        # Iterate rows and rewrite only Aperture path editors to reflect preference
+        row = 1
+        cur = self.head.next
+        while cur is not None:
+            if cur.type == "Aperture":
+                cell = self.table.cellWidget(row, 3)
+                if cell is not None:
+                    try:
+                        pe = cell.findChild(QLineEdit)
+                        if pe is not None:
+                            pe.setText(self._normalize_aperture_display_path(cur.aperture_path))
+                    except Exception:
+                        pass
+            cur = cur.next
+            row += 1
 
     def resizeEvent(self, a0):
         super().resizeEvent(a0)
