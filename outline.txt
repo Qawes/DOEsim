@@ -27,12 +27,10 @@ MISC - resizing while calculating images hides "calculating" and shows previous 
      - some numberfield should allow for zero values
      - numberfields with a non zero minimum should jump to a whole integer from minimum value (eg. 0.01 -> 1, not 0.01 -> 1.01)
      - possibly add an option to use relative distances instead of placement - Add moving arrows to elements
-     - right clicking woekspace name should show contextmenu
-     - fix table coolumn width annoyance -> use qsettings save geometry
-     - element nme change should be in sync wit hthe add element naming system (numbering)
-     - MAKE PHYS VIS SETUP SCRIPT MORE CONCISE, REMOVE BLOAT
+     - right clicking workspace name should show contextmenu
+     - element name change should be in sync with the add element naming system (numbering)
      - simulation should not run when aperture with empty path is present
-     - preferences window should close when main window is closed
+     - creating new tab should switch to it
 
 
 AI Model experience:

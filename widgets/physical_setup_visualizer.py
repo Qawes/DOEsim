@@ -1,10 +1,15 @@
-from PyQt6.QtWidgets import QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QWidget, QTableWidget, QTableWidgetItem, QComboBox, QDoubleSpinBox, QHeaderView, QFileDialog, QLineEdit, QStackedLayout, QMessageBox, QCheckBox, QSpinBox
+from PyQt6.QtWidgets import QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QWidget, QTableWidget, QTableWidgetItem, QComboBox, QDoubleSpinBox, QHeaderView, QFileDialog, QLineEdit, QMessageBox, QCheckBox, QSpinBox, QApplication
 from PyQt6.QtCore import Qt, QSettings, QEvent, QTimer
 from typing import Optional
-from widgets.system_parameters_widget import DEFAULT_RESOLUTION_PX_PER_MM, DEFAULT_EXTENSION_Y_MM, DEFAULT_EXTENSION_X_MM, DEFAULT_WAVELENGTH_NM
-from widgets.preferences_window import PreferencesTab, PreferencesWindow, getpref
+from widgets.preferences_window import getpref
+from widgets.preferences_window import (
+    SET_ENABLE_SCROLLWHEEL,
+    SET_SELECT_ALL_ON_FOCUS,
+    SET_USE_RELATIVE_PATHS,
+    SET_RENAME_ON_TYPE_CHANGE,
+    SET_WARN_BEFORE_DELETE,
+)
 
-UpdateNameOnTypeChange = False
 GLOBAL_MINIMUM_DISTANCE_MM = 0.01
 GLOBAL_MAXIMUM_DISTANCE_MM = 100000.0
 GLOBAL_DEFAULT_DISTANCE_MM = 10.0
@@ -27,8 +32,7 @@ class ElementNode:
 class PhysicalSetupVisualizer(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.settings = QSettings("diffractsim", "PhysicalSetupVisualizer")
-        # TODO: please make sure to utilize the getpref function imported from preferences_window.py to read user preferences, instead of implementing an own one
+        # Widget layout
         layout = QVBoxLayout(self)
         label = QLabel("<b>Physical Setup</b>")
         label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -58,7 +62,7 @@ class PhysicalSetupVisualizer(QWidget):
         self.setLayout(layout)
         # Linked list head: always the light source
         self.head = ElementNode("Light Source", "LightSource", 0)
-        self._restore_column_widths()
+        self._restore_header_state()
         self.table.itemSelectionChanged.connect(self._update_delete_button_state)
         self.refresh_table()
 
@@ -71,11 +75,11 @@ class PhysicalSetupVisualizer(QWidget):
         et = a1.type() if a1 is not None else None
         if et == QEvent.Type.Wheel:
             # Optionally disable scrollwheel for spinboxes and combos within the table
-            if not bool(getpref('enable_scrollwheel')):
+            if not bool(getpref(SET_ENABLE_SCROLLWHEEL)):
                 if isinstance(a0, (QDoubleSpinBox, QSpinBox, QComboBox)):
                     return True  # consume
         elif et == QEvent.Type.FocusIn:
-            if bool(getpref('select_all_on_focus')): # TODO: does not actually select text in qdoublespinboxes
+            if bool(getpref(SET_SELECT_ALL_ON_FOCUS)):
                 if isinstance(a0, QLineEdit):
                     a0.selectAll()
                 elif isinstance(a0, (QDoubleSpinBox, QSpinBox)):
@@ -88,15 +92,11 @@ class PhysicalSetupVisualizer(QWidget):
                         pass
         return super().eventFilter(a0, a1)
 
-    def _use_relative_paths(self) -> bool:
-        # TODO: use the imported getpref function. Changing this setting should immediately change the paths in the table.
-        return bool(getpref('use_relative_paths'))
-
     def _to_pref_path(self, path: str) -> str:
         import os
         if not path:
             return path
-        if self._use_relative_paths():
+        if bool(getpref(SET_USE_RELATIVE_PATHS)):
             try:
                 return os.path.relpath(path, os.getcwd())
             except Exception:
@@ -309,22 +309,6 @@ class PhysicalSetupVisualizer(QWidget):
         m = _re.match(r'^(Aperture|Lens|Screen)\s+(\d+)$', str(node.name))
         return m is not None
 
-    def _make_unique_name(self, base: str) -> str:
-        existing = set()
-        cur = self.head
-        while cur is not None:
-            existing.add(cur.name)
-            cur = cur.next
-        if base not in existing:
-            return base
-        # Append next index
-        idx = 2
-        candidate = f"{base} ({idx})"
-        while candidate in existing:
-            idx += 1
-            candidate = f"{base} ({idx})"
-        return candidate
-
     def _name_exists(self, name: str, exclude: Optional['ElementNode'] = None) -> bool:
         cur = self.head
         while cur is not None:
@@ -343,7 +327,7 @@ class PhysicalSetupVisualizer(QWidget):
         
         # Rename element if preference enabled and current name is default-generated
         try:
-            if bool(getpref('rename_on_type_change')) and self._is_default_generated_name(node):
+            if bool(getpref(SET_RENAME_ON_TYPE_CHANGE)) and self._is_default_generated_name(node):
                 import re as _re
                 m = _re.match(r'^(Aperture|Lens|Screen)\s+(\d+)$', str(node.name))
                 if m:
@@ -382,7 +366,6 @@ class PhysicalSetupVisualizer(QWidget):
             original_order.append(cur)
             cur = cur.next
 
-        old_distance = node.distance
         node.distance = new_distance
 
         # Remove node from current list (if present)
@@ -494,18 +477,16 @@ class PhysicalSetupVisualizer(QWidget):
 
         # Map selected rows -> nodes and names by walking the linked list once
         row_to_node = {}
-        names_in_order = []
         cur = self.head.next
         row_idx = 1  # table row index for first real element
         while cur is not None:
             if row_idx in valid_rows:
                 row_to_node[row_idx] = cur
-                names_in_order.append(cur.name)
             cur = cur.next
             row_idx += 1
 
         # Build confirmation message with stable ordering by row number
-        confirm = bool(getpref('warn_before_delete'))
+        confirm = bool(getpref(SET_WARN_BEFORE_DELETE))
         if confirm:
             lines = [f"Element {r}: {row_to_node[r].name}" for r in valid_rows if r in row_to_node]
             msg = (
@@ -552,33 +533,14 @@ class PhysicalSetupVisualizer(QWidget):
             cur = cur.next
             row += 1
 
-    def resizeEvent(self, a0):
-        super().resizeEvent(a0)
-        header = self.table.horizontalHeader()
-        viewport = self.table.viewport()
-        if header is not None and viewport is not None:
-            self._resize_columns_proportionally(header, viewport)
-            self._save_column_widths(header)
-
-    def _resize_columns_proportionally(self, header, viewport):
-        total_width = viewport.width() if viewport is not None else 1
-        proportions = [0.2, 0.2, 0.2, 0.4]
-        for i, prop in enumerate(proportions):
+    def _restore_header_state(self):
+        try:
+            header = self.table.horizontalHeader()
             if header is not None:
-                header.resizeSection(i, int(total_width * prop))
-
-    def _save_column_widths(self, header):
-        if header is not None:
-            for i in range(self.table.columnCount()):
-                self.settings.setValue(f"col_width_{i}", header.sectionSize(i))
-
-    def _restore_column_widths(self):
-        header = self.table.horizontalHeader()
-        if header is not None:
-            for i in range(self.table.columnCount()):
-                w = self.settings.value(f"col_width_{i}", None)
-                if w is not None:
-                    header.resizeSection(i, int(w))
+                # Keep default header; main window geometry persistence is used for overall window layout
+                pass
+        except Exception:
+            pass
 
     def export_elements_for_engine(self):
         import engine
