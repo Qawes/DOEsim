@@ -263,6 +263,8 @@ class PhysicalSetupVisualizer(QWidget):
             node = node.next
             idx += 1
         self._update_delete_button_state()
+        # Notify image containers that the element list or attributes changed
+        self._notify_image_containers_changed()
 
     def add_element(self, elem_type):
         import os
@@ -319,6 +321,7 @@ class PhysicalSetupVisualizer(QWidget):
 
     def _on_name_edited(self, node, new_name):
         node.name = new_name
+        self._notify_image_containers_changed()
 
     def _on_type_changed(self, node, new_type):
         # TODO: if the setting is enabled, rename any default element names eg: "Aperture 2" to "Lens 2" when changing type. You should just replace the Lens string to Aperture. BUT if it would result in a non-unique name, abort the renaming! renaming element to a non-unique name should ALWAYS be run against the unique name check, and aborted (silently) if it would result in a non-unique name.
@@ -434,6 +437,8 @@ class PhysicalSetupVisualizer(QWidget):
             node.aperture_path = self._to_pref_path(abspath(new_path))
         except Exception:
             node.aperture_path = self._to_pref_path(new_path)
+        # Refresh aperture image container if needed
+        self._notify_image_containers_changed()
 
     def _on_screen_range_edited(self, node, is_range, steps_label, steps_spin):
         node.is_range = is_range
@@ -444,15 +449,19 @@ class PhysicalSetupVisualizer(QWidget):
         row = self._find_row_for_node(node)
         if row is not None:
             self.table.setCellWidget(row, 2, self._build_screen_distance_widget(node))
+        # Notify image containers (affects screen browsing UI and solve enablement)
+        self._notify_image_containers_changed()
 
     def _on_screen_range_end_edited(self, node, new_end):
         # Ensure range_end is not less than start
         if new_end < node.distance:
             new_end = node.distance
         node.range_end = new_end
+        self._notify_image_containers_changed()
 
     def _on_screen_steps_edited(self, node, steps):
         node.steps = max(2, int(steps))
+        self._notify_image_containers_changed()
 
     def _browse_aperture(self, node, path_edit):
         dlg = QFileDialog(self, "Select Aperture Bitmap", "", "Images (*.png *.jpg *.bmp)")
@@ -463,6 +472,7 @@ class PhysicalSetupVisualizer(QWidget):
                 node.aperture_path = stored
                 # Display normalized according to current preference
                 path_edit.setText(self._normalize_aperture_display_path(node.aperture_path))
+                self._notify_image_containers_changed()
 
     def _update_delete_button_state(self):
         # Always keep delete enabled; the handler checks for valid selection.
@@ -548,6 +558,7 @@ class PhysicalSetupVisualizer(QWidget):
         node = self.head.next  # skip light source
         while node:
             params = {}
+            params["name"] = node.name
             if node.type == "Aperture":
                 if node.aperture_path:
                     params["image_path"] = node.aperture_path
@@ -559,7 +570,32 @@ class PhysicalSetupVisualizer(QWidget):
             elif node.type == "Screen":
                 params["is_range"] = bool(node.is_range)
                 params["range_end_mm"] = float(node.range_end if node.range_end is not None else node.distance)
-                params["steps"] = int(node.steps if node.steps is not None else 10)
-            elements.append(engine.Element(distance=node.distance, element_type=node.type.lower(), params=params))
+                params["steps"] = int(node.steps if node.steps is not None else 10) # TODO: this always fails and returns 10 
+            elements.append(engine.Element(distance=node.distance, element_type=node.type.lower(), params=params, name=node.name))
             node = node.next
         return elements
+
+    # --- New: notify image panels helper ---
+    def _notify_image_containers_changed(self):
+        try:
+            parent = self.parent()
+            # Avoid importing at top-level to reduce cycle risk
+            from main_window import WorkspaceTab  # type: ignore
+            while parent is not None and not isinstance(parent, WorkspaceTab):
+                parent = parent.parent()
+            if parent is None:
+                return
+            ap = getattr(parent, 'aperture_img', None)
+            sc = getattr(parent, 'screen_img', None)
+            if ap is not None and hasattr(ap, 'refresh_from_visualizer_change'):
+                try:
+                    ap.refresh_from_visualizer_change()
+                except Exception:
+                    pass
+            if sc is not None and hasattr(sc, 'refresh_from_visualizer_change'):
+                try:
+                    sc.refresh_from_visualizer_change()
+                except Exception:
+                    pass
+        except Exception:
+            pass

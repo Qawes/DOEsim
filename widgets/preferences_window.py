@@ -1,5 +1,6 @@
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QGroupBox, QFormLayout, QCheckBox, QDoubleSpinBox
 from PyQt6.QtCore import Qt, QSettings
+from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import QPushButton, QMessageBox
 
 SET_AUTO_OPEN_NEW_WORKSPACE = 'auto_open_new_workspace'
@@ -12,10 +13,12 @@ SET_WARN_BEFORE_DELETE = 'warn_before_delete'
 SET_USE_RELATIVE_PATHS = 'use_relative_paths'
 SET_DEFAULT_ELEMENT_OFFSET_MM = 'default_element_offset_mm'
 SET_OPEN_TAB_ON_STARTUP = 'open_tab_on_startup'
+SET_RETAIN_WORKING_FILES = 'retain_working_files' # This setting controls if the generated screen files are kept in the solutions folder. if false, they are deleted just after the solve button is clicked in the same workspace. if it is true, every generated image is saved inside simulation_results/<workspace_name>/<current time in unix>/. make sure this is followed properly in engine.py
+SET_AUTO_GENERATE_GIF = 'auto_generate_gif' # this setting controls whether a gif is generated from each screen range (only ranges, single screens are unaffected). 
 
 # Module-level defaults to mirror main_window preferences
 _DEFAULT_PREFS = {
-    SET_AUTO_OPEN_NEW_WORKSPACE: True,
+    SET_AUTO_OPEN_NEW_WORKSPACE: False,
     SET_ASK_BEFORE_CLOSING: True,
     SET_CONFIRM_ON_SAVE: True,
     SET_ENABLE_SCROLLWHEEL: False,
@@ -25,6 +28,8 @@ _DEFAULT_PREFS = {
     SET_USE_RELATIVE_PATHS: True,
     SET_DEFAULT_ELEMENT_OFFSET_MM: 10.0,
     SET_OPEN_TAB_ON_STARTUP: False,
+    SET_RETAIN_WORKING_FILES: False,
+    SET_AUTO_GENERATE_GIF: True,
 }
 
 def _coerce_type(val, typ):
@@ -74,7 +79,7 @@ class PreferencesTab(QWidget):
         # Workspace behavior
         grp_workspace = QGroupBox("Workspace behavior", self)
         flw = QFormLayout(grp_workspace)
-        self.chk_auto_open = QCheckBox("Auto open new workspace when last is closed", grp_workspace)
+        self.chk_auto_open = QCheckBox("Auto open new workspace when none is present", grp_workspace)
         self.chk_ask_before_close = QCheckBox("Ask before closing workspaces", grp_workspace)
         self.chk_open_on_startup = QCheckBox("Open an empty workspace on startup", grp_workspace)
         flw.addRow(self.chk_auto_open)
@@ -99,6 +104,16 @@ class PreferencesTab(QWidget):
         grp_ui.setLayout(flu)
         root.addWidget(grp_ui)
 
+        # Output options
+        grp_output = QGroupBox("Output", self)
+        flo = QFormLayout(grp_output)
+        self.chk_retain_files = QCheckBox("Retain generated screen files (save under timestamped subfolders)", grp_output)
+        self.chk_auto_gif = QCheckBox("Auto-generate GIF for screen ranges", grp_output)
+        flo.addRow(self.chk_retain_files)
+        flo.addRow(self.chk_auto_gif)
+        grp_output.setLayout(flo)
+        root.addWidget(grp_output)
+
         # Paths and defaults
         grp_paths = QGroupBox("Paths and defaults", self)
         flp = QFormLayout(grp_paths)
@@ -115,9 +130,15 @@ class PreferencesTab(QWidget):
         # Maintenance
         grp_maint = QGroupBox("Maintenance", self)
         flm = QFormLayout(grp_maint)
+        # Right-align the reset button
+        from PyQt6.QtWidgets import QHBoxLayout, QSizePolicy
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch(1)
         self.btn_reset_settings = QPushButton("Reset all settings to defaults", grp_maint)
         self.btn_reset_settings.setToolTip("Deletes all saved user settings (window geometry, layouts, and preferences)")
-        flm.addRow(self.btn_reset_settings)
+        self.btn_reset_settings.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
+        btn_layout.addWidget(self.btn_reset_settings)
+        flm.addRow(btn_layout)
         grp_maint.setLayout(flm)
         root.addWidget(grp_maint)
 
@@ -134,6 +155,8 @@ class PreferencesTab(QWidget):
         self.chk_select_all_on_focus.toggled.connect(lambda v: setpref(SET_SELECT_ALL_ON_FOCUS, bool(v)))
         self.chk_rename_on_type.toggled.connect(lambda v: setpref(SET_RENAME_ON_TYPE_CHANGE, bool(v)))
         self.chk_warn_before_delete.toggled.connect(lambda v: setpref(SET_WARN_BEFORE_DELETE, bool(v)))
+        self.chk_retain_files.toggled.connect(lambda v: setpref(SET_RETAIN_WORKING_FILES, bool(v)))
+        self.chk_auto_gif.toggled.connect(lambda v: setpref(SET_AUTO_GENERATE_GIF, bool(v)))
         self.chk_use_relative.toggled.connect(self._notify_use_relative_paths_changed)
         # Apply default distance immediately as well
         self.spin_default_offset.valueChanged.connect(lambda v: (setpref(SET_DEFAULT_ELEMENT_OFFSET_MM, float(v)), self._mw._apply_default_distance(float(v))))
@@ -171,6 +194,11 @@ class PreferencesTab(QWidget):
         self.chk_warn_before_delete.setChecked(bool(getpref(SET_WARN_BEFORE_DELETE)))
         self.chk_use_relative.setChecked(bool(getpref(SET_USE_RELATIVE_PATHS)))
         self.chk_open_on_startup.setChecked(bool(getpref(SET_OPEN_TAB_ON_STARTUP)))
+        # New
+        if hasattr(self, 'chk_retain_files'):
+            self.chk_retain_files.setChecked(bool(getpref(SET_RETAIN_WORKING_FILES)))
+        if hasattr(self, 'chk_auto_gif'):
+            self.chk_auto_gif.setChecked(bool(getpref(SET_AUTO_GENERATE_GIF)))
         self.spin_default_offset.setValue(float(getpref(SET_DEFAULT_ELEMENT_OFFSET_MM)))
 
     def _reset_all_settings(self):
@@ -232,6 +260,7 @@ class PreferencesWindow(QWidget):
     def __init__(self, main_window, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Preferences")
+        self.setWindowIcon(QIcon("fzp_icon.ico"))
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
         layout = QVBoxLayout(self)
         self._tab = PreferencesTab(main_window, self)

@@ -1,25 +1,8 @@
-Python GUI application using QT6, for the purposes of utilizing "diffractsim" library graphically. 
-The app should consist of three scripts: main.py, gui.py, and engine.py. main is responsible for launching the gui, gui is the frontend facing the user, and engine in the backend, to which all actual calculation requests will be sent. 
-
-A mockup of the  app's layout can be found in "Mockup Main Window.png" and "Mockup Optical vis.png", but a short summary is:
-- Menu bar (Toolbar)
-  |-- File
-  |   |-- New
-  |   |-- Save
-  |   |-- Load
-  |-- Edit
-  |   |-- Options
-  |-- Help
-  |   |-- Help
-  |   |-- About
-- Tab window - separated by a resizable split container (Working area with tabs on top, to switch workspaces, children are of such a tab)
-  |-- working area, with values to enter, and two large image containers separated by a split container (resizable), a solve button under each image
-  
 TODO:
 FEAT - add fifth column (another value)
      - for lens it is convex / concave -> manage automatically with negative f values
      - for aperatures it is inverted or not, and a second radio between all other aperatures - is this unknown -> reverse propagation
-     - for screens first value is is it range or single
+     - for screens first value is it range or single
      - for screens second value is two numbers: length, and interval between screens
 
 MISC - resizing while calculating images hides "calculating" and shows previous image (pr text)
@@ -27,10 +10,21 @@ MISC - resizing while calculating images hides "calculating" and shows previous 
      - some numberfield should allow for zero values
      - numberfields with a non zero minimum should jump to a whole integer from minimum value (eg. 0.01 -> 1, not 0.01 -> 1.01)
      - possibly add an option to use relative distances instead of placement - Add moving arrows to elements
-     - right clicking workspace name should show contextmenu
      - element name change should be in sync with the add element naming system (numbering)
      - simulation should not run when aperture with empty path is present
      - creating new tab should switch to it
+     - right clicking workspace name should show contextmenu
+     - manage delete button enabled state
+     - underflowing spinbox limit forces element to switch places .\bug.mkv
+     - stylize welcome text
+     - is screen range start adn end are equal, force step to be one
+     - add tooltips for all settings!
+     - gif is stretched :( dont
+     - do smtn with the screen stepping arrows
+     - make solve buttons work! (find out how to do global release flag)
+     - disable aperture solve btn for now
+     - add path for sim_results folder
+
 
 
 AI Model experience:
@@ -51,14 +45,3 @@ GUI tests in order:
 - load Scene_1 into memory, check if all elements and system parameters match 
 - add an aperture, rename it to white, set distance to 0.01. add a lens named fokusz, distance 0.01, focal length 30. add a screen named initial distance 0.01. add a screen named logitudinal distance from 1 to 100 in 15 steps. rename workspace to Generated_1 and save (overwrite if necessary). check if exported json matches manually prepared one (Scene_2)
 - click solve button under screen
-
-Preferences:
-+ Auto open new workspace when last is closed
-+ ask before closing workspaces
-+ display confirmation os saving workspaces
-+ enable scrollwheel in elements table to modify dropboxes and spinboxes
-+ select all text when clicking into inputfield
-+ change element name when changing its type (only if name is the default generated one)
-+ warn before deleting elements
-+ use relative paths
-+ default distance between elements when adding them to the table

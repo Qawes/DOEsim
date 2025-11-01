@@ -1,5 +1,6 @@
 from PyQt6.QtWidgets import QMainWindow, QTabWidget, QSplitter, QVBoxLayout, QMessageBox, QMenuBar, QMenu, QWidget, QInputDialog, QLineEdit, QFileDialog, QLabel, QStackedWidget
 from PyQt6.QtCore import Qt, QSettings
+from PyQt6.QtGui import QIcon
 from widgets.system_parameters_widget import SystemParametersWidget
 from widgets.physical_setup_visualizer import PhysicalSetupVisualizer
 from widgets.image_container import ImageContainer
@@ -14,8 +15,8 @@ from widgets.preferences_window import (
 import re
 
 # ---------- Default UI layout (edit these to change the initial appearance) ----------
-DEFAULT_WINDOW_GEOMETRY = (200, 200, 1200, 800)  # x, y, width, height
-DEFAULT_SPLITTER_V_SIZES = [360, 640]            # top/bottom heights (px)
+DEFAULT_WINDOW_GEOMETRY = (350, 100, 1200, 800)  # x, y, width, height
+DEFAULT_SPLITTER_V_SIZES = [400, 600]            # top/bottom heights (px)
 DEFAULT_SPLITTER_H_SIZES = [600, 600]            # left/right widths (px)
 DEFAULT_TABLE_COLUMN_PROPORTIONS = [0.2, 0.2, 0.2, 0.4]  # Name, Type, Distance, Value
 # ------------------------------------------------------------------------------------
@@ -71,13 +72,19 @@ class MainWindow(QMainWindow):
     
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Diffractsim GUI Proof of Concept")
+        self.setWindowTitle("DOEsim GUI Proof of Concept")
+        self.setWindowIcon(QIcon("fzp_icon.ico")) 
         self.resize(1200, 800)
         self._createMenuBar()
         # Central stacked widget: placeholder when no tabs, tabs when present
         self._central_stack = QStackedWidget(self)
         # Rich-text placeholder with clickable actions
-        self._placeholder = QLabel("Click <a href='new'>Here</a> to create a new Workspace<br/>or<br/><a href='load'>Load</a> an existing one.")
+        self._placeholder = QLabel(
+            "<div style='font-size:18pt; font-style:italic; color:#777777;'>" #  font-weight:bold;
+            "<b><a href='new'>Create</a></b> a new Workspace,<br/>or<br/>"
+            "<b><a href='load'>Load</a></b> an existing one."
+            "</div>"
+        )
         self._placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._placeholder.setWordWrap(True)
         self._placeholder.setTextFormat(Qt.TextFormat.RichText)
@@ -107,9 +114,9 @@ class MainWindow(QMainWindow):
         self.setMenuBar(menubar)
         file_menu = QMenu("File", self)
         menubar.addMenu(file_menu)
-        file_menu.addAction("New", self.add_new_tab)
-        file_menu.addAction("Save", self.save_workspace)
-        file_menu.addAction("Load", self.load_workspace)
+        file_menu.addAction("New Workspace", self.add_new_tab)
+        file_menu.addAction("Save Workspace", self.save_workspace)
+        file_menu.addAction("Load Workspace", self.load_workspace)
         edit_menu = QMenu("Edit", self)
         menubar.addMenu(edit_menu)
         edit_menu.addAction("Preferences", self.open_preferences_tab)
