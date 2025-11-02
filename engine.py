@@ -7,6 +7,7 @@ from pathlib import Path
 from PIL import Image
 from datetime import datetime
 import time
+from widgets.helpers import slugify as _slugify, fmt_fixed as _fmt2
 
 # Preferences
 try:
@@ -162,10 +163,7 @@ def calculate_screen_images(FieldType, Wavelength, ExtentX, ExtentY, Resolution,
             screen_uint8 = np.ascontiguousarray(screen_uint8)
         # Filename: use element name for uniqueness; include slice index when present
         def _slug(nm: str | None) -> str: # TODO: great, but replace '_' with space, as '_' will be a delimiter for determining grouping of slices of a screen range
-            s = (nm or "screen").strip()
-            if not s:
-                s = "screen"
-            return "".join(ch if (ch.isalnum() or ch in ("_", "-")) else "_" for ch in s)
+            return _slugify(nm)
         safe_name = _slug(getattr(e, 'name', None))
         slice_idx = e.params.get('slice_index')
         if slice_idx is not None:
@@ -215,7 +213,7 @@ def calculate_screen_images(FieldType, Wavelength, ExtentX, ExtentY, Resolution,
                 if len(frames_sorted) < 2:
                     continue
                 name, start_mm, end_mm, steps = key
-                slug = "".join(ch if (str(ch).isalnum() or ch in ("_", "-")) else "_" for ch in (name or "screen"))
+                slug = _slugify(name)
                 gif_name = f"{slug}_{start_mm:.2f}_to_{end_mm:.2f}_mm_steps_{int(steps)}.gif"
                 gif_path = output_dir / gif_name
                 pil_frames = []
@@ -271,7 +269,7 @@ def calculate_screen_images(FieldType, Wavelength, ExtentX, ExtentY, Resolution,
             if screen.get('range_start_mm') is not None:
                 f.write(f"  Range Start: {screen.get('range_start_mm')} mm\n")
             if screen.get('range_end_mm') is not None:
-                f.write(f"  Range End: {screen.get('range_end_mm')} mm\n")
+                f.write(f"  Range End: {screen['range_end_mm']} mm\n")
             if screen.get('steps') is not None:
                 f.write(f"  Steps: {screen['steps']}\n")
             f.write(f"  Filename: {screen['filename']}\n")

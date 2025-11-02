@@ -51,3 +51,17 @@ GUI tests in order:
 - load Scene_1 into memory, check if all elements and system parameters match 
 - add an aperture, rename it to white, set distance to 0.01. add a lens named fokusz, distance 0.01, focal length 30. add a screen named initial distance 0.01. add a screen named logitudinal distance from 1 to 100 in 15 steps. rename workspace to Generated_1 and save (overwrite if necessary). check if exported json matches manually prepared one (Scene_2)
 - click solve button under screen
+
+
+tests:
+- workspace naming and validation (check for all delims ' ', ',', '.')
+- element table renaming sync between adding new and changing element type
+- test for screen end distance limits
+create elements A1, A2, L1, S1, S2 of types aperture, aperture, lens, screen ,screen
+change L1 type to aperture, check for names A1, A2, L1, S1, S2
+change L1 type to screen, check for names A1, A2, L1, S1, S2
+change A2 type to lens, check for names A1, L2, L1, S1, S2
+change L2 type to screen, check for names A1, L2, L1, S1, S2
+change s2 type to aperture, check for names A1, L2, L1, S1, A2
+check for types: aperture, screen, screen, screen, aperture
+set A1 name to L1, expect error message, check for names A1, L2, L1, S1, A2

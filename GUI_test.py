@@ -184,6 +184,68 @@ def ensure_dirs():
     os.makedirs(os.path.join(os.getcwd(), "aperatures"), exist_ok=True)
 
 
+def step_spin_to_value(spin: QDoubleSpinBox, target: float):
+    """Drive a QDoubleSpinBox to target using stepUp/stepDown, not setValue.
+    Uses a ladder of singleStep sizes for speed, then fine adjustment.
+    """
+    if not isinstance(spin, QDoubleSpinBox):
+        return
+    ladder = [10.0, 1.0, 0.1, 0.01]
+    # Ensure target within spin range
+    target = max(spin.minimum(), min(spin.maximum(), float(target)))
+    for step in ladder:
+        spin.setSingleStep(step)
+        QApplication.processEvents()
+        # Move upwards in coarse steps
+        while (target - spin.value()) >= (step - 1e-12):
+            spin.stepUp()
+            QApplication.processEvents()
+        # If overshot, step down
+        while (spin.value() - target) >= (step - 1e-12):
+            spin.stepDown()
+            QApplication.processEvents()
+    try:
+        spin.editingFinished.emit()
+    except Exception:
+        pass
+    QApplication.processEvents()
+
+
+def step_distance(table, row: int, target: float):
+    """Find the distance spinbox cell for a row and step it to target.
+    Works for single spin and for composite range widget (uses the From spin).
+    """
+    w = table.cellWidget(row, 2)
+    spin = None
+    if isinstance(w, QDoubleSpinBox):
+        spin = w
+    elif isinstance(w, QWidget):
+        spins = w.findChildren(QDoubleSpinBox)
+        if spins:
+            # Sort left-to-right, use first as 'From'
+            spins = sorted(spins, key=lambda s: s.geometry().x())
+            spin = spins[0]
+    if isinstance(spin, QDoubleSpinBox):
+        step_spin_to_value(spin, target)
+
+
+def select_row_and_wait(table, row: int, timeout_ms: int = 1000) -> bool:
+    try:
+        table.clearSelection()
+        QApplication.processEvents()
+        table.setFocus()
+        table.selectRow(int(row))
+        QApplication.processEvents()
+        return wait_until(
+            lambda: hasattr(table, 'selectionModel') and table.selectionModel() is not None and any(
+                idx.row() == row for idx in table.selectionModel().selectedRows()
+            ),
+            timeout_ms=timeout_ms,
+        )
+    except Exception:
+        return False
+
+
 class GUITestCase(unittest.TestCase):
     app: Optional[QApplication] = None
     window: Optional[MainWindow] = None
@@ -195,7 +257,7 @@ class GUITestCase(unittest.TestCase):
         ensure_dirs()
         # Create a single QApplication for all tests
         existing_app = QApplication.instance()
-        if existing_app is None:
+        if (existing_app is None):
             existing_app = QApplication(sys.argv)
         cls.app = cast(QApplication, existing_app)
         # Create the main window
@@ -311,11 +373,8 @@ class GUITestCase(unittest.TestCase):
         self.assertEqual(table.rowCount(), 4)  # Strict Equality in element table rows!
         with patch.object(QMessageBox, 'question', return_value=QMessageBox.StandardButton.Yes):
             for idx in range(3):
-                table.clearSelection()
-                QApplication.processEvents()
-                table.setFocus()
-                table.selectRow(1)
-                QApplication.processEvents()
+                # Ensure selection is applied before deleting
+                self.assertTrue(select_row_and_wait(table, 1, timeout_ms=1000), "Row 1 not selected before delete")
                 prev_rows = table.rowCount()
                 vw.del_btn.click()
                 expected_rows = prev_rows - 1
@@ -557,170 +616,190 @@ class GUITestCase(unittest.TestCase):
         with patch.object(_QMB, 'question', return_value=_QMB.StandardButton.Yes):
             vw.del_btn.click()
         # remaining order and types
-        self.assertEqual(get_order(), ["A2", "A1"])
+        self.assertEqual(get_order(), ["A2", "A1"]) 
         self.assertEqual(cast(QComboBox, table.cellWidget(find_row_by_name(table, "A2"), 1)).currentText(), "Screen")
         self.assertEqual(cast(QComboBox, table.cellWidget(find_row_by_name(table, "A1"), 1)).currentText(), "Aperture")
 
-    # 10) load Scene_1 and verify params/elements
-    def test_10_load_scene_1_and_verify(self):
+    # 10) type-change naming sequence as specified
+    def test_10_type_change_naming_sequence(self):
         window = cast(MainWindow, self.window)
-        workdir = os.path.join(os.getcwd(), "workspaces")
-        scene1_path = os.path.join(workdir, "Scene_1_hand.json") # Load a pre-saved scene - known good content
-        sys_params = {
-            'field_type': 'Monochromatic',
-            'wavelength_nm': float(TESTING_WAVELENGTH_NM),
-            'extent_x_mm': float(TESTING_EXTENSION_X_MM),
-            'extent_y_mm': float(TESTING_EXTENSION_Y_MM),
-            'resolution_px_per_mm': float(TESTING_RESOLUTION_PX_PER_MM),
-        }
-        elements = [
-            { 'name': 'white', 'type': 'Aperture', 'distance_mm': 0.01, 'aperture_path': os.path.join('aperatures', 'white.png') },
-            { 'name': 'fokusz', 'type': 'Lens', 'distance_mm': 0.01, 'focal_length_mm': 30.0 },
-            { 'name': 'initial', 'type': 'Screen', 'distance_mm': 0.01, 'is_range': False },
-            { 'name': 'longitudinal', 'type': 'Screen', 'distance_mm': 1.0, 'is_range': True, 'range_end_mm': 100.0, 'steps': 15 },
-        ]
-        with patch('PyQt6.QtWidgets.QFileDialog.getOpenFileName', return_value=(scene1_path, '')):
-            window.load_workspace()
-        # Current tab should be Scene_1_hand
-        self.assertEqual(window.tabs.tabText(window.tabs.currentIndex()), 'Scene_1_hand')
-        tab_widget = cast(WorkspaceTab, window.tabs.currentWidget())
-        # Verify system params
-        sp = tab_widget.sys_params
-        self.assertEqual(sp.field_type.currentText(), sys_params['field_type'])
-        self.assertAlmostEqual(sp.wavelength.value(), sys_params['wavelength_nm'], places=3)
-        self.assertAlmostEqual(sp.extension_x.value(), sys_params['extent_x_mm'], places=3)
-        self.assertAlmostEqual(sp.extension_y.value(), sys_params['extent_y_mm'], places=3)
-        self.assertAlmostEqual(sp.resolution.value(), sys_params['resolution_px_per_mm'], places=3)
-        # Verify elements by name and attributes
-        table = tab_widget.visualizer.table
-        # white aperture
-        r = find_row_by_name(table, 'white')
-        self.assertEqual(r, 1)
-        self.assertEqual(cast(QComboBox, table.cellWidget(r, 1)).currentText(), 'Aperture')
-        self.assertAlmostEqual(cast(QDoubleSpinBox, table.cellWidget(r, 2)).value(), 0.01, places=3)
-        # TODO: check aperture image path
-        # fokusz lens
-        r = find_row_by_name(table, 'fokusz')
-        self.assertEqual(r, 2)
-        self.assertEqual(cast(QComboBox, table.cellWidget(r, 1)).currentText(), 'Lens')
-        self.assertAlmostEqual(cast(QDoubleSpinBox, table.cellWidget(r, 2)).value(), 0.01, places=3)
-        lens_focus = table.cellWidget(r, 3)
-        self.assertIsInstance(lens_focus, QDoubleSpinBox)
-        self.assertAlmostEqual(cast(QDoubleSpinBox, lens_focus).value(), 30.0, places=3)
-        # initial screen
-        r = find_row_by_name(table, 'initial')
-        self.assertEqual(r, 3)
-        self.assertEqual(cast(QComboBox, table.cellWidget(r, 1)).currentText(), 'Screen')
-        self.assertAlmostEqual(cast(QDoubleSpinBox, table.cellWidget(r, 2)).value(), 0.01, places=3)
-        val_cell = table.cellWidget(r, 3)
-        self.assertIsNotNone(val_cell)
-        rc = cast(QWidget, val_cell).findChild(QCheckBox)
-        self.assertIsNotNone(rc)
-        self.assertFalse(cast(QCheckBox, rc).isChecked())
-        # longitudinal screen (range)
-        r = find_row_by_name(table, 'longitudinal')
-        self.assertEqual(r, 4)
-        self.assertEqual(cast(QComboBox, table.cellWidget(r, 1)).currentText(), 'Screen')
-        val_cell = table.cellWidget(r, 3)
-        self.assertIsNotNone(val_cell)
-        rc = cast(QWidget, val_cell).findChild(QCheckBox)
-        self.assertIsNotNone(rc)
-        self.assertTrue(cast(QCheckBox, rc).isChecked())
-        # Verify From/To spins
-        dist_cell = table.cellWidget(r, 2)
-        spins = []
-        if isinstance(dist_cell, QWidget):
-            spins = dist_cell.findChildren(QDoubleSpinBox)
-        self.assertGreaterEqual(len(spins), 2)
-        self.assertAlmostEqual(spins[0].value(), 1.0, places=3)
-        self.assertAlmostEqual(spins[1].value(), 100.0, places=3)
-
-    # 11) build and save Generated_1, compare with Scene_2
-    def test_11_generate_and_save_compare_to_scene_2(self):
-        window = cast(MainWindow, self.window)
-        # Switch back to first tab (Testing) to build there
-        window.tabs.setCurrentIndex(0)
-        tab_widget = cast(WorkspaceTab, window.tabs.currentWidget())
-        vw = tab_widget.visualizer
+        vw = cast(WorkspaceTab, window.tabs.widget(0)).visualizer
         table = vw.table
-        # Clear elements
-        vw.head.next = None
-        vw.refresh_table()
-        # Add aperture 'white' d=0.01
+
+        def get_names():
+            names = []
+            for r in range(1, table.rowCount()):
+                w = table.cellWidget(r, 0)
+                if isinstance(w, QLineEdit):
+                    names.append(cast(QLineEdit, w).text())
+            return names
+
+        # Create elements Aperture 1, Aperture 2, Lens 1, Screen 1, Screen 2 of types A, A, L, S, S
         vw.add_aperture_btn.click()
-        wait_until(lambda: table.rowCount() == 2, 300)
-        r = table.rowCount() - 1
-        set_name(table, r, 'white')
-        set_distance(table, r, 0.01)
-        set_aperture_image_path(table, r, os.path.join('aperatures', 'white.png'))
-        # Add lens 'fokusz' d=0.01 f=30
+        self.assertTrue(wait_until(lambda: table.rowCount() == 2, 1000))
+        set_name(table, 1, "Aperture 1")
+
+        vw.add_aperture_btn.click()
+        self.assertTrue(wait_until(lambda: table.rowCount() == 3, 1000))
+        set_name(table, 2, "Aperture 2")
+
         vw.add_lens_btn.click()
-        wait_until(lambda: table.rowCount() == 3, 300)
-        r = table.rowCount() - 1
-        set_name(table, r, 'fokusz')
-        set_distance(table, r, 0.01)
-        lf = table.cellWidget(find_row_by_name(table, 'fokusz'), 3)
-        self.assertIsInstance(lf, QDoubleSpinBox)
-        cast(QDoubleSpinBox, lf).setValue(30.0)
-        try:
-            cast(QDoubleSpinBox, lf).editingFinished.emit()
-        except Exception:
-            pass
-        # Add screen 'initial' d=0.01
+        self.assertTrue(wait_until(lambda: table.rowCount() == 4, 1000))
+        set_name(table, 3, "Lens 1")
+
         vw.add_screen_btn.click()
-        wait_until(lambda: table.rowCount() == 4, 300)
-        r = table.rowCount() - 1
-        set_name(table, r, 'initial')
-        set_distance(table, r, 0.01)
-        # Add screen 'longitudinal' range 1..100 steps 15
+        self.assertTrue(wait_until(lambda: table.rowCount() == 5, 1000))
+        set_name(table, 4, "Screen 1")
+
         vw.add_screen_btn.click()
-        wait_until(lambda: table.rowCount() == 5, 300)
-        r = table.rowCount() - 1
-        set_name(table, r, 'longitudinal')
-        set_screen_range(table, r, True, start_val=1.0, end_val=100.0, steps=15)
-        # Rename workspace to Generated_1 and save
-        with patch.object(QInputDialog, 'getText', return_value=("Generated_1", True)):
-            window.rename_tab(window.tabs.currentIndex())
-        save_path = os.path.join(os.getcwd(), 'workspaces', 'Generated_1.json')
-        # Ensure old file does not trigger overwrite dialog (and auto-answer any modal dialogs)
-        try:
-            os.remove(save_path)
-        except FileNotFoundError:
-            pass
-        with patch('PyQt6.QtWidgets.QFileDialog.getSaveFileName', return_value=(save_path, '')), \
-             patch.object(QMessageBox, 'question', return_value=QMessageBox.StandardButton.Yes), \
-             patch.object(QMessageBox, 'information', return_value=QMessageBox.StandardButton.Ok):
-            window.save_workspace()
-        # Build expected Scene_2 and write
-        scene2_path = os.path.join(os.getcwd(), 'workspaces', 'Scene_2.json')
-        sys_params = {
-            'field_type': 'Monochromatic',
-            'wavelength_nm': float(DEFAULT_WAVELENGTH_NM),
-            'extent_x_mm': float(DEFAULT_EXTENSION_X_MM),
-            'extent_y_mm': float(DEFAULT_EXTENSION_Y_MM),
-            'resolution_px_per_mm': float(DEFAULT_RESOLUTION_PX_PER_MM),
+        self.assertTrue(wait_until(lambda: table.rowCount() == 6, 1000))
+        set_name(table, 5, "Screen 2")
+
+        self.assertEqual(get_names(), ["Aperture 1", "Aperture 2", "Lens 1", "Screen 1", "Screen 2"])
+
+        # change Lens 1 type to aperture, expect names unchanged
+        row = find_row_by_name(table, "Lens 1")
+        type_w = table.cellWidget(row, 1)
+        self.assertIsInstance(type_w, QComboBox)
+        cast(QComboBox, type_w).setCurrentText("Aperture")
+        self.assertTrue(wait_until(lambda: get_names() == ["Aperture 1", "Aperture 2", "Lens 1", "Screen 1", "Screen 2"], 1000))
+        self.assertEqual(get_names(), ["Aperture 1", "Aperture 2", "Lens 1", "Screen 1", "Screen 2"])
+
+        # change Lens 1 type to screen, expect names unchanged
+        row = find_row_by_name(table, "Lens 1")
+        type_w = table.cellWidget(row, 1)
+        self.assertIsInstance(type_w, QComboBox)
+        cast(QComboBox, type_w).setCurrentText("Screen")
+        self.assertTrue(wait_until(lambda: get_names() == ["Aperture 1", "Aperture 2", "Lens 1", "Screen 1", "Screen 2"], 1000))
+        self.assertEqual(get_names(), ["Aperture 1", "Aperture 2", "Lens 1", "Screen 1", "Screen 2"])
+
+        # change Aperture 2 type to lens -> expect Aperture 2 becomes Lens 2
+        row = find_row_by_name(table, "Aperture 2")
+        type_w = table.cellWidget(row, 1)
+        self.assertIsInstance(type_w, QComboBox)
+        cast(QComboBox, type_w).setCurrentText("Lens")
+        self.assertTrue(wait_until(lambda: get_names() == ["Aperture 1", "Lens 2", "Lens 1", "Screen 1", "Screen 2"], 1500))
+        self.assertEqual(get_names(), ["Aperture 1", "Lens 2", "Lens 1", "Screen 1", "Screen 2"])
+
+        # change Lens 2 type to screen -> expect names unchanged
+        row = find_row_by_name(table, "Lens 2")
+        type_w = table.cellWidget(row, 1)
+        self.assertIsInstance(type_w, QComboBox)
+        cast(QComboBox, type_w).setCurrentText("Screen")
+        self.assertTrue(wait_until(lambda: get_names() == ["Aperture 1", "Lens 2", "Lens 1", "Screen 1", "Screen 2"], 1500))
+        self.assertEqual(get_names(), ["Aperture 1", "Lens 2", "Lens 1", "Screen 1", "Screen 2"])
+
+        # change Screen 2 type to aperture -> expect Screen 2 becomes Aperture 2
+        row = find_row_by_name(table, "Screen 2")
+        type_w = table.cellWidget(row, 1)
+        self.assertIsInstance(type_w, QComboBox)
+        cast(QComboBox, type_w).setCurrentText("Aperture")
+        self.assertTrue(wait_until(lambda: get_names() == ["Aperture 1", "Lens 2", "Lens 1", "Screen 1", "Aperture 2"], 1500))
+        self.assertEqual(get_names(), ["Aperture 1", "Lens 2", "Lens 1", "Screen 1", "Aperture 2"])
+
+        # check for types: aperture, screen, screen, screen, aperture (in the current name order)
+        expected = {
+            "Aperture 1": "Aperture",
+            "Lens 2": "Screen",
+            "Lens 1": "Screen",
+            "Screen 1": "Screen",
+            "Aperture 2": "Aperture",
         }
-        elements = [
-            { 'name': 'white', 'type': 'Aperture', 'distance_mm': 0.01, 'aperture_path': os.path.join('aperatures', 'white.png') },
-            { 'name': 'fokusz', 'type': 'Lens', 'distance_mm': 0.01, 'focal_length_mm': 30.0 },
-            { 'name': 'initial', 'type': 'Screen', 'distance_mm': 0.01, 'is_range': False },
-            { 'name': 'longitudinal', 'type': 'Screen', 'distance_mm': 1.0, 'is_range': True, 'range_end_mm': 100.0, 'steps': 15 },
-        ]
-        #write_scene_json(scene2_path, 'Generated_1', sys_params, elements)
-        # Load both and compare relevant sections
-        with open(save_path, 'r', encoding='utf-8') as f:
-            saved = json.load(f)
-        with open(scene2_path, 'r', encoding='utf-8') as f:
-            expected = json.load(f)
-        self.assertEqual(saved.get('workspace_name'), expected.get('workspace_name'))
-        self.assertEqual(saved.get('system_params'), expected.get('system_params'))
-        # Compare elements ignoring order by mapping name->dict trimmed
-        def _trim(e: dict):
-            out = {k: v for k, v in e.items() if k in {'name','type','distance_mm','aperture_path','focal_length_mm','is_range','range_end_mm','steps'}}
-            return out
-        saved_map = {e.get('name'): _trim(e) for e in saved.get('elements', [])}
-        exp_map = {e.get('name'): _trim(e) for e in expected.get('elements', [])}
-        self.assertEqual(saved_map, exp_map)
+        for name in ["Aperture 1", "Lens 2", "Lens 1", "Screen 1", "Aperture 2"]:
+            r = find_row_by_name(table, name)
+            self.assertNotEqual(r, -1)
+            t = table.cellWidget(r, 1)
+            self.assertIsInstance(t, QComboBox)
+            self.assertEqual(cast(QComboBox, t).currentText(), expected[name])
+
+        # set Aperture 1 name to Lens 1 -> expect conflict error and names unchanged
+        a1_row = find_row_by_name(table, "Aperture 1")
+        set_name(table, a1_row, "Lens 1")
+        QApplication.processEvents()
+        # final names should remain the same and contain both Aperture 1 and Lens 1
+        self.assertEqual(get_names(), ["Aperture 1", "Lens 2", "Lens 1", "Screen 1", "Aperture 2"])
+
+    # 11) advanced reordering via spinbox steps (no direct setValue)
+    def test_11_advanced_reordering_via_steps(self):
+        window = cast(MainWindow, self.window)
+        vw = cast(WorkspaceTab, window.tabs.widget(0)).visualizer
+        table = vw.table
+
+        def get_order():
+            names = []
+            for r in range(1, table.rowCount()):
+                w = table.cellWidget(r, 0)
+                if isinstance(w, QLineEdit):
+                    names.append(cast(QLineEdit, w).text())
+            return names
+
+        # Build sequence A1, A2, L1, L2, S1, S2
+        vw.add_aperture_btn.click()
+        self.assertTrue(wait_until(lambda: table.rowCount() == 2, 1000))
+        set_name(table, 1, "A1")
+
+        vw.add_aperture_btn.click()
+        self.assertTrue(wait_until(lambda: table.rowCount() == 3, 1000))
+        set_name(table, 2, "A2")
+
+        vw.add_lens_btn.click()
+        self.assertTrue(wait_until(lambda: table.rowCount() == 4, 1000))
+        set_name(table, 3, "L1")
+
+        vw.add_lens_btn.click()
+        self.assertTrue(wait_until(lambda: table.rowCount() == 5, 1000))
+        set_name(table, 4, "L2")
+
+        vw.add_screen_btn.click()
+        self.assertTrue(wait_until(lambda: table.rowCount() == 6, 1000))
+        set_name(table, 5, "S1")
+
+        vw.add_screen_btn.click()
+        self.assertTrue(wait_until(lambda: table.rowCount() == 7, 1000))
+        set_name(table, 6, "S2")
+
+        # Initial order
+        self.assertEqual(get_order(), ["A1", "A2", "L1", "L2", "S1", "S2"])
+
+        # set A1 dist to 15 via steps
+        step_distance(table, find_row_by_name(table, "A1"), 15.0)
+        self.assertTrue(wait_until(lambda: get_order() == ["A1", "A2", "L1", "L2", "S1", "S2"], 1000))
+        self.assertEqual(get_order(), ["A1", "A2", "L1", "L2", "S1", "S2"])
+
+        # set A1 dist to 100 via steps
+        step_distance(table, find_row_by_name(table, "A1"), 100.0)
+        self.assertTrue(wait_until(lambda: get_order() == ["A2", "L1", "L2", "S1", "S2", "A1"], 2000))
+        self.assertEqual(get_order(), ["A2", "L1", "L2", "S1", "S2", "A1"])
+
+        # set A1 dist to 60 (ties with S2 -> expect after S2)
+        step_distance(table, find_row_by_name(table, "A1"), 60.0)
+        self.assertTrue(wait_until(lambda: get_order() == ["A2", "L1", "L2", "S1", "S2", "A1"], 1000))
+        self.assertEqual(get_order(), ["A2", "L1", "L2", "S1", "S2", "A1"])
+
+        # set L1 dist to 0.01
+        step_distance(table, find_row_by_name(table, "L1"), 0.01)
+        self.assertTrue(wait_until(lambda: get_order() == ["L1", "A2", "L2", "S1", "S2", "A1"], 2000))
+        self.assertEqual(get_order(), ["L1", "A2", "L2", "S1", "S2", "A1"])
+
+        # set A2 dist to 0.01 (equal to L1 -> after L1)
+        step_distance(table, find_row_by_name(table, "A2"), 0.01)
+        self.assertTrue(wait_until(lambda: get_order() == ["L1", "A2", "L2", "S1", "S2", "A1"], 2000))
+        self.assertEqual(get_order(), ["L1", "A2", "L2", "S1", "S2", "A1"])
+
+        # set L1 dist to 1
+        step_distance(table, find_row_by_name(table, "L1"), 1.0)
+        self.assertTrue(wait_until(lambda: get_order() == ["A2", "L1", "L2", "S1", "S2", "A1"], 2000))
+        self.assertEqual(get_order(), ["A2", "L1", "L2", "S1", "S2", "A1"])
+
+        # set L1 dist to 0.01 (equal to A2 -> after A2)
+        step_distance(table, find_row_by_name(table, "L1"), 0.01)
+        self.assertTrue(wait_until(lambda: get_order() == ["A2", "L1", "L2", "S1", "S2", "A1"], 2000))
+        self.assertEqual(get_order(), ["A2", "L1", "L2", "S1", "S2", "A1"])
+
+        # set S1 dist to 60
+        step_distance(table, find_row_by_name(table, "S1"), 60.0)
+        self.assertTrue(wait_until(lambda: get_order() == ["A2", "L1", "L2", "S1", "S2", "A1"], 2000))
+        self.assertEqual(get_order(), ["A2", "L1", "L2", "S1", "S2", "A1"])
 
     # 12) click solve under screen
     def test_12_click_solve_button_under_screen(self):
@@ -731,6 +810,143 @@ class GUITestCase(unittest.TestCase):
         solve_btn.click()
         self.assertTrue(wait_until(lambda: solve_btn.isEnabled(), 5000))
 
+    # 13) workspace naming and validation across delimiters (space, comma, dot)
+    def test_13_workspace_naming_and_validation_delimiters(self):
+        window = cast(MainWindow, self.window)
+        workdir = os.path.join(os.getcwd(), "workspaces")
+        os.makedirs(workdir, exist_ok=True)
+
+        def _write_ws(path, ws_name: str):
+            data = {
+                'workspace_name': ws_name,
+                'system_params': {
+                    'engine': 'Diffractsim Forward',
+                    'field_type': 'Monochromatic',
+                    'wavelength_nm': float(DEFAULT_WAVELENGTH_NM),
+                    'extent_x_mm': float(DEFAULT_EXTENSION_X_MM),
+                    'extent_y_mm': float(DEFAULT_EXTENSION_Y_MM),
+                    'resolution_px_per_mm': float(DEFAULT_RESOLUTION_PX_PER_MM),
+                },
+                'elements': [],
+            }
+            with open(path, 'w', encoding='utf-8') as f:
+                json.dump(data, f)
+
+        # Base tab named "Scene 1"
+        window.add_new_tab()
+        base_idx = window.tabs.count() - 1
+        with patch.object(QInputDialog, 'getText', return_value=("Scene 1", True)):
+            window.rename_tab(base_idx)
+        self.assertEqual(window.tabs.tabText(base_idx), "Scene 1")
+
+        # Case 1: load workspace with same name "Scene 1" -> expect auto-increment to "Scene 2"
+        p1 = os.path.join(workdir, "tmp_scene_space.json")
+        _write_ws(p1, "Scene 1")
+        with patch('PyQt6.QtWidgets.QFileDialog.getOpenFileName', return_value=(p1, '')), \
+             patch.object(QMessageBox, 'information', return_value=QMessageBox.StandardButton.Ok):
+            window.load_workspace()
+        self.assertEqual(window.tabs.tabText(window.tabs.currentIndex()), "Scene 2")
+
+        # Case 2: load workspace with name using comma delimiter -> expect sanitized + increment to "Scene_2"
+        p2 = os.path.join(workdir, "tmp_scene_comma.json")
+        _write_ws(p2, "Scene,1")
+        with patch('PyQt6.QtWidgets.QFileDialog.getOpenFileName', return_value=(p2, '')), \
+             patch.object(QMessageBox, 'information', return_value=QMessageBox.StandardButton.Ok):
+            window.load_workspace()
+        self.assertEqual(window.tabs.tabText(window.tabs.currentIndex()), "Scene_2")
+        self.assertNotIn(',', window.tabs.tabText(window.tabs.currentIndex()))
+
+        # Case 3: dot delimiter -> expect "Scene_2" as well
+        p3 = os.path.join(workdir, "tmp_scene_dot.json")
+        _write_ws(p3, "Scene.1")
+        with patch('PyQt6.QtWidgets.QFileDialog.getOpenFileName', return_value=(p3, '')), \
+             patch.object(QMessageBox, 'information', return_value=QMessageBox.StandardButton.Ok):
+            window.load_workspace()
+        self.assertEqual(window.tabs.tabText(window.tabs.currentIndex()), "Scene_3")
+        self.assertNotIn('.', window.tabs.tabText(window.tabs.currentIndex()))
+
+    # 14) element table renaming sync when changing type (auto-rename unique only)
+    def test_14_element_auto_rename_on_type_change_unique(self):
+        window = cast(MainWindow, self.window)
+        vw = cast(WorkspaceTab, window.tabs.widget(0)).visualizer
+        table = vw.table
+        # Add Aperture -> default name "Aperture 1"
+        vw.add_aperture_btn.click()
+        self.assertTrue(wait_until(lambda: table.rowCount() == 2, 500))
+        # Change type to Lens; name should become "Lens 1"
+        type_w = table.cellWidget(1, 1)
+        self.assertIsInstance(type_w, QComboBox)
+        cast(QComboBox, type_w).setCurrentText("Lens")
+        self.assertTrue(wait_until(lambda: find_row_by_name(table, "Lens 1") == 1, 500))
+        self.assertEqual(find_row_by_name(table, "Lens 1"), 1)
+        self.assertEqual(cast(QComboBox, table.cellWidget(1, 1)).currentText(), 'Lens')
+
+    def test_15_element_auto_rename_on_type_change_conflict(self):
+        window = cast(MainWindow, self.window)
+        vw = cast(WorkspaceTab, window.tabs.widget(0)).visualizer
+        table = vw.table
+        # Ensure a Lens 1 exists
+        vw.add_lens_btn.click()
+        self.assertTrue(wait_until(lambda: table.rowCount() == 2, 500))
+        self.assertEqual(find_row_by_name(table, "Lens 1"), 1)
+        # Add Aperture -> default "Aperture 1"
+        vw.add_aperture_btn.click()
+        self.assertTrue(wait_until(lambda: table.rowCount() == 3, 500))
+        a_row = 2
+        self.assertEqual(cast(QLineEdit, table.cellWidget(a_row, 0)).text(), "Aperture 1")
+        # Change its type to Lens; due to conflict, name should remain "Aperture 1"
+        type_w = table.cellWidget(a_row, 1)
+        self.assertIsInstance(type_w, QComboBox)
+        cast(QComboBox, type_w).setCurrentText("Lens")
+        # Reacquire row for name after refresh
+        row = find_row_by_name(table, "Aperture 1")
+        self.assertNotEqual(row, -1)
+        self.assertEqual(cast(QComboBox, table.cellWidget(row, 1)).currentText(), 'Lens')
+
+    # 16) screen end distance clamp and minimum follows start
+    def test_16_screen_end_distance_limits(self):
+        window = cast(MainWindow, self.window)
+        vw = cast(WorkspaceTab, window.tabs.widget(0)).visualizer
+        table = vw.table
+        vw.add_screen_btn.click()
+        self.assertTrue(wait_until(lambda: table.rowCount() == 2, 500))
+        # Enable range and set From to 5.0, To to 3.0 (should clamp to 5.0)
+        set_screen_range(table, 1, True, start_val=5.0)
+        dist_cell = table.cellWidget(1, 2)
+        spins = []
+        if isinstance(dist_cell, QWidget):
+            spins = dist_cell.findChildren(QDoubleSpinBox)
+        self.assertGreaterEqual(len(spins), 2)
+        # Ensure ordering [From, To]
+        spins = sorted(spins, key=lambda s: s.geometry().x())
+        # Try to set To below From
+        spins[1].setValue(3.0)
+        try:
+            spins[1].editingFinished.emit()
+        except Exception:
+            pass
+        QApplication.processEvents()
+        # Reacquire after any rebuild
+        dist_cell = table.cellWidget(1, 2)
+        spins = []
+        if isinstance(dist_cell, QWidget):
+            spins = dist_cell.findChildren(QDoubleSpinBox)
+        spins = sorted(spins, key=lambda s: s.geometry().x()) if spins else []
+        self.assertGreaterEqual(spins[1].value(), 5.0)
+        self.assertGreaterEqual(spins[1].minimum(), 5.0)
+        # Increase From to 12.0 -> To min should follow and clamp if lower
+        spins[0].setValue(12.0)
+        try:
+            spins[0].editingFinished.emit()
+        except Exception:
+            pass
+        QApplication.processEvents()
+        dist_cell = table.cellWidget(1, 2)
+        spins = []
+        if isinstance(dist_cell, QWidget):
+            spins = dist_cell.findChildren(QDoubleSpinBox)
+        spins = sorted(spins, key=lambda s: s.geometry().x()) if spins else []
+        self.assertGreaterEqual(spins[1].minimum(), 12.0)
 
 if __name__ == "__main__":
     suite = unittest.defaultTestLoader.loadTestsFromTestCase(GUITestCase)

@@ -7,6 +7,7 @@ from pathlib import Path
 import glob
 import numpy as np
 import engine
+from widgets.helpers import slugify as _slugify, fmt_fixed as _fmt2
 
 class ImageContainer(QWidget):
     def __init__(self, title, parent=None):
@@ -306,10 +307,7 @@ class ImageContainer(QWidget):
             self.image_label.setPixmap(QPixmap())
 
     def _slug(self, nm: str | None) -> str:
-        s = (nm or "screen").strip()
-        if not s:
-            s = "screen"
-        return "".join(ch if (ch.isalnum() or ch in ("_", "-")) else "_" for ch in s)
+        return _slugify(nm)
 
     def _screen_results_dir(self) -> Path:
         tab = self._find_workspace_tab()
@@ -333,10 +331,7 @@ class ImageContainer(QWidget):
             self._saved_gifs = sorted(directory.glob("*.gif"), key=lambda p: p.stat().st_mtime)
 
     def _fmt2(self, v: float) -> str:
-        try:
-            return f"{float(v):.2f}"
-        except Exception:
-            return str(v)
+        return _fmt2(v)
 
     def _clear_movie(self):
         try:

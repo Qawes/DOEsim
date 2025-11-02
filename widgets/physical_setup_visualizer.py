@@ -11,6 +11,18 @@ from widgets.preferences_window import (
     SET_WARN_BEFORE_DELETE,
     SET_ERR_MESS_DUR,
 )
+from widgets.helpers import (
+    is_valid_name,
+    is_default_generated_element_name,
+    generate_unique_default_name,
+    name_exists,
+    show_temp_tooltip,
+    abs_path as _abs_path_helper,
+    to_pref_path as _to_pref_path_helper,
+    normalize_path_for_display as _normalize_path_for_display,
+    DEFAULT_ALLOWED_NAME_PATTERN,
+)
+from widgets.helpers import validate_name_against, filter_to_accepted_chars
 
 GLOBAL_MINIMUM_DISTANCE_MM = 0
 GLOBAL_MAXIMUM_DISTANCE_MM = 100000.0
@@ -99,26 +111,13 @@ class PhysicalSetupVisualizer(QWidget):
         import os
         if not path:
             return path
-        if bool(getpref(SET_USE_RELATIVE_PATHS)):
-            try:
-                return os.path.relpath(path, os.getcwd())
-            except Exception:
-                return path
-        return path
+        return _to_pref_path_helper(path, bool(getpref(SET_USE_RELATIVE_PATHS)))
 
     def _abs_path(self, path: Optional[str]) -> Optional[str]:
-        import os
-        if not path:
-            return path
-        try:
-            return path if os.path.isabs(path) else os.path.abspath(path)
-        except Exception:
-            return path
+        return _abs_path_helper(path)
 
     def _normalize_aperture_display_path(self, stored_path: Optional[str]) -> str:
-        # Always display according to current preference, regardless of how it is stored
-        ap = self._abs_path(stored_path)
-        return self._to_pref_path(ap) if ap else ""
+        return _normalize_path_for_display(stored_path, bool(getpref(SET_USE_RELATIVE_PATHS)))
 
     def _find_row_for_node(self, target) -> Optional[int]:
         """Return table row index for a given node, or None if not found."""
@@ -289,23 +288,7 @@ class PhysicalSetupVisualizer(QWidget):
             dur = int(getpref(SET_ERR_MESS_DUR, 3000))
         except Exception:
             dur = 3000
-        # Prefer showing near the provided widget; fall back to focus widget or cursor
-        try:
-            pos = widget.mapToGlobal(widget.rect().bottomLeft())
-            QToolTip.showText(pos, text, widget, widget.rect(), dur)
-            return
-        except Exception:
-            pass
-        try:
-            fw = QApplication.focusWidget()
-            if fw is not None:
-                pos = fw.mapToGlobal(fw.rect().center())
-                QToolTip.showText(pos, text, fw, fw.rect(), dur)
-            else:
-                pos = QCursor.pos()
-                QToolTip.showText(pos, text, None, QRect(), dur)
-        except Exception:
-            pass
+        show_temp_tooltip(widget, text, dur)
 
     def add_element(self, elem_type):
         import os
@@ -348,19 +331,15 @@ class PhysicalSetupVisualizer(QWidget):
         return count
 
     def _generate_unique_default_name(self, base_type: str) -> str:
-        """Return the first available default name like 'Aperture 1', 'Lens 2', etc.,
-        that does not collide with any existing element name (across all types)."""
-        i = 1
-        while True:
-            candidate = f"{base_type} {i}"
-            if not self._name_exists(candidate):
-                return candidate
-            i += 1
+        existing = []
+        cur = self.head.next
+        while cur is not None:
+            existing.append(cur.name)
+            cur = cur.next
+        return generate_unique_default_name(base_type, existing)
 
     def _is_default_generated_name(self, node: 'ElementNode') -> bool:
-        import re as _re
-        m = _re.match(r'^(Aperture|Lens|Screen)\s+(\d+)$', str(node.name))
-        return m is not None
+        return is_default_generated_element_name(getattr(node, 'name', ''))
 
     def _name_exists(self, name: str, exclude: Optional['ElementNode'] = None) -> bool:
         cur = self.head
@@ -377,18 +356,23 @@ class PhysicalSetupVisualizer(QWidget):
             new_name = str(name_edit.text()).strip()
         except Exception:
             new_name = ""
-        # Reject empty names or duplicates
-        if not new_name or self._name_exists(new_name, exclude=node):
+        # Build existing names excluding this node
+        existing = []
+        cur = self.head
+        while cur is not None:
+            if cur is not node:
+                existing.append(cur.name)
+            cur = cur.next
+        vr = validate_name_against(new_name, existing, 1, DEFAULT_ALLOWED_NAME_PATTERN)
+        if vr is not True:
             try:
                 name_edit.blockSignals(True)
                 name_edit.setText(node.name)
                 name_edit.blockSignals(False)
             except Exception:
                 pass
-            # Non-intrusive feedback
-            self._show_temp_tooltip(name_edit, "Element names must be unique.")
+            self._show_temp_tooltip(name_edit, "Element names must be valid and unique.")
             return
-        # Accept unique name
         node.name = new_name
         self._notify_image_containers_changed()
 
@@ -404,8 +388,15 @@ class PhysicalSetupVisualizer(QWidget):
                 if m:
                     suffix = m.group(2)
                     desired = f"{new_type} {suffix}"
-                    # Abort renaming if it would not be unique
-                    if not self._name_exists(desired, exclude=node):
+                    # Validate desired name against other elements
+                    existing = []
+                    cur = self.head
+                    while cur is not None:
+                        if cur is not node:
+                            existing.append(cur.name)
+                        cur = cur.next
+                    vr = validate_name_against(desired, existing, 1, DEFAULT_ALLOWED_NAME_PATTERN)
+                    if vr is True:
                         node.name = desired
                     else:
                         # Show non-intrusive error if rename aborted

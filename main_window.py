@@ -12,7 +12,7 @@ from widgets.preferences_window import (
     SET_AUTO_OPEN_NEW_WORKSPACE,
     SET_OPEN_TAB_ON_STARTUP,
 )
-import re
+from widgets.helpers import validate_name_against, suggest_unique_name
 
 # ---------- Default UI layout (edit these to change the initial appearance) ----------
 DEFAULT_WINDOW_GEOMETRY = (350, 100, 1200, 800)  # x, y, width, height
@@ -233,28 +233,15 @@ class MainWindow(QMainWindow):
 
             # Determine unique tab name BEFORE adding the tab
             desired_name = data.get('workspace_name') or "Workspace"
-            name = desired_name
-            # Capture validation reason for messaging
-            validation_result = self.validate_workspace_name(name)
-            rename_reason = None if (validation_result is True) else validation_result
-            if validation_result is not True:
-                # If base ends with <delim><number> where <delim> is ' ', '-', or '_', increment that number; otherwise append _2 and increment
-                base = desired_name or "Workspace"
-                m = re.match(r'^(.*?)([ _-])(\d+)$', base)
-                if m:
-                    prefix = m.group(1)
-                    delim = m.group(2)
-                    counter = int(m.group(3)) + 1
-                else:
-                    prefix = base
-                    delim = '_'
-                    counter = 2
-                while True:
-                    candidate = f"{prefix}{delim}{counter}"
-                    if self.validate_workspace_name(candidate) is True:
-                        name = candidate
-                        break
-                    counter += 1
+            existing_names = [self.tabs.tabText(i) for i in range(self.tabs.count())]
+            # Use centralized validator
+            vr = validate_name_against(desired_name, existing_names, self.MIN_WORKSPACE_NAME_LENGTH, self.WORKSPACE_NAME_ALLOWED_CHARS)
+            if vr is True:
+                name = desired_name
+                rename_reason = None
+            else:
+                name = suggest_unique_name(desired_name, existing_names, self.MIN_WORKSPACE_NAME_LENGTH, self.WORKSPACE_NAME_ALLOWED_CHARS)
+                rename_reason = vr
             was_renamed = (name != desired_name)
 
             # Create a new workspace tab and select it
@@ -400,7 +387,7 @@ class MainWindow(QMainWindow):
             return
         
         current_name = self.tabs.tabText(index)
-          # Show input dialog
+        # Show input dialog
         new_name, ok = QInputDialog.getText(
             self,
             "Rename Workspace",
@@ -410,12 +397,17 @@ class MainWindow(QMainWindow):
         )
         
         if ok and new_name:
-            # Validate the new name
-            validation_result = self.validate_workspace_name(new_name, exclude_index=index)
-            if validation_result is True:
+            # Build existing list and validate against it, excluding current tab name
+            existing = []
+            for i in range(self.tabs.count()):
+                if i == index:
+                    continue
+                existing.append(self.tabs.tabText(i))
+            vr = validate_name_against(new_name, existing, self.MIN_WORKSPACE_NAME_LENGTH, self.WORKSPACE_NAME_ALLOWED_CHARS)
+            if vr is True:
                 self.tabs.setTabText(index, new_name)
             else:
-                QMessageBox.warning(self, "Invalid Name", validation_result)
+                QMessageBox.warning(self, "Invalid Name", vr)
 
     def _on_tabbar_context_menu(self, pos):
         """Show context menu for a tab (rename/close) at right-click position."""
@@ -455,31 +447,14 @@ class MainWindow(QMainWindow):
 
     def validate_workspace_name(self, name, exclude_index=None):
         """
-        Validate workspace name according to rules.
-        
-        Args:
-            name: The proposed workspace name
-            exclude_index: Tab index to exclude from duplicate check (for renaming)
-        
-        Returns:
-            True if valid, or error message string if invalid.
+        Validate workspace name according to rules using shared helper.
         """
-        # Check minimum length
-        if len(name) < self.MIN_WORKSPACE_NAME_LENGTH:
-            return f"Workspace name must be at least {self.MIN_WORKSPACE_NAME_LENGTH} characters long."
-        
-        # Check allowed characters
-        if not re.match(self.WORKSPACE_NAME_ALLOWED_CHARS, name):
-            return "Workspace name can only contain letters, numbers, spaces, underscores, and hyphens."
-        
-        # Check for duplicate names
+        existing = []
         for i in range(self.tabs.count()):
-            if i == exclude_index:  # Skip the tab being renamed
+            if exclude_index is not None and i == exclude_index:
                 continue
-            if self.tabs.tabText(i) == name:
-                return f"A workspace with the name '{name}' already exists."
-        
-        return True
+            existing.append(self.tabs.tabText(i))
+        return validate_name_against(name, existing, self.MIN_WORKSPACE_NAME_LENGTH, self.WORKSPACE_NAME_ALLOWED_CHARS)
 
     def _update_empty_placeholder(self):
         """Show an italic hint when there are no workspace tabs; otherwise show tabs."""
