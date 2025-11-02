@@ -1,9 +1,10 @@
 # filepath: widgets/helpers.py
 import os
 import re
+import time
 from typing import Iterable, Optional
 
-from PyQt6.QtWidgets import QWidget, QApplication, QToolTip
+from PyQt6.QtWidgets import QWidget, QApplication, QToolTip, QLineEdit, QDoubleSpinBox, QCheckBox, QComboBox, QSpinBox
 from PyQt6.QtCore import QRect
 from PyQt6.QtGui import QCursor
 
@@ -193,3 +194,311 @@ def fmt_fixed(v: float, decimals: int = 2) -> str:
         return f"{float(v):.{int(decimals)}f}"
     except Exception:
         return str(v)
+
+
+class Element:
+    """
+    Universal element data model used across UI and engine.
+    - distance: float (mm)
+    - element_type: engine token (lowercase) via property; display 'type' via property
+    - params: dict for engine/runtime parameters (e.g., image_path, width_mm, height_mm, f, range flags)
+    - name: optional display name
+    - next: optional link for UI list management
+
+    Also carries optional convenience attributes commonly used by the UI:
+      focal_length, aperture_path, is_range, range_end, steps, aperture_width_mm, aperture_height_mm
+    """
+    def __init__(self,
+                 name: str | None = None,
+                 elem_type: str | None = None,
+                 distance: float | int | None = None,
+                 focal_length: float | int | None = None,
+                 aperture_path: str | None = None,
+                 is_range: bool | None = None,
+                 range_end: float | int | None = None,
+                 steps: int | None = None,
+                 params: dict | None = None,
+                 # Back-compat alias: allow engine-style constructor
+                 element_type: str | None = None):
+        self.name = name
+        self._display_type = None
+        # Accept either display type (elem_type) or engine type (element_type)
+        if elem_type is not None:
+            self._display_type = elem_type
+        elif element_type is not None:
+            # Use element_type setter mapping
+            self.element_type = element_type
+        self.distance = float(distance) if distance is not None else 0.0
+        self.params = dict(params) if params is not None else {}
+        # Optional fields used by the UI
+        self.focal_length = focal_length
+        self.aperture_path = aperture_path
+        self.is_range = is_range
+        self.range_end = float(range_end) if range_end is not None else None
+        self.steps = int(steps) if steps is not None else None
+        self.aperture_width_mm: float | None = None
+        self.aperture_height_mm: float | None = None
+        # Linked list support for UI ordering
+        self.next: Element | None = None
+
+    # UI property (Display type, e.g., 'Aperture')
+    @property
+    def type(self) -> str | None:
+        return self._display_type
+
+    @type.setter
+    def type(self, v: str | None):
+        self._display_type = v
+
+    # Engine property (lowercase token, e.g., 'aperture')
+    @property
+    def element_type(self) -> str | None:
+        if self._display_type is None:
+            return None
+        key = str(self._display_type).replace(' ', '').lower()
+        mapping = {
+            'aperture': 'aperture',
+            'lens': 'lens',
+            'screen': 'screen',
+            'apertureresult': 'apertureresult',
+            'targetintensity': 'targetintensity',
+        }
+        return mapping.get(key, key)
+
+    @element_type.setter
+    def element_type(self, v: str | None):
+        if v is None:
+            self._display_type = None
+            return
+        key = str(v).replace(' ', '').lower()
+        reverse = {
+            'aperture': 'Aperture',
+            'lens': 'Lens',
+            'screen': 'Screen',
+            'apertureresult': 'Aperture Result',
+            'targetintensity': 'Target Intensity',
+        }
+        self._display_type = reverse.get(key, v)
+
+
+# --- GUI testing helpers (shared across tests) ---
+
+def wait_until(predicate, timeout_ms: int = 5000, step_ms: int = 25) -> bool:
+    start = time.time()
+    while (time.time() - start) * 1000 < timeout_ms:
+        QApplication.processEvents()
+        try:
+            if predicate():
+                return True
+        except Exception:
+            pass
+        time.sleep(step_ms / 1000.0)
+    return False
+
+
+def find_row_by_name(table, name: str) -> int:
+    for r in range(getattr(table, 'rowCount')()):
+        w = table.cellWidget(r, 0)
+        if isinstance(w, QLineEdit) and w.text() == name:
+            return r
+    return -1
+
+
+def set_name(table, row: int, new_name: str):
+    editor = table.cellWidget(row, 0)
+    if not isinstance(editor, QLineEdit):
+        return
+    editor.setText(new_name)
+    try:
+        editor.editingFinished.emit()
+    except Exception:
+        pass
+
+
+def set_distance(table, row: int, new_dist: float):
+    w = table.cellWidget(row, 2)
+    # If it's a single QDoubleSpinBox
+    if isinstance(w, QDoubleSpinBox):
+        w.setValue(new_dist)
+        try:
+            w.editingFinished.emit()
+        except Exception:
+            pass
+        return
+    # If it's a composite widget (range enabled): the "From" editor is the first QDoubleSpinBox
+    if isinstance(w, QWidget):
+        spins = w.findChildren(QDoubleSpinBox)
+        if spins:
+            # Sort by x-position to ensure [From, To]
+            spins = sorted(spins, key=lambda s: s.geometry().x())
+            spins[0].setValue(new_dist)
+            try:
+                spins[0].editingFinished.emit()
+            except Exception:
+                pass
+
+
+def set_aperture_image_path(table, row: int, path: str):
+    type_w = table.cellWidget(row, 1)
+    if not isinstance(type_w, QComboBox):
+        return
+    if "aperture" not in type_w.currentText().strip().lower():
+        return
+    cell = table.cellWidget(row, 3)
+    if cell is None:
+        return
+    line = cell.findChild(QLineEdit)
+    if line is None:
+        return
+    line.setText(path)
+    try:
+        line.editingFinished.emit()
+    except Exception:
+        pass
+
+
+def set_screen_range(table, row: int, is_enabled: bool, start_val: float | None = None, end_val: float | None = None, steps: int | None = None):
+    # Toggle the checkbox
+    val_cell = table.cellWidget(row, 3)
+    if (val_cell is None):
+        return
+    chk = val_cell.findChild(QCheckBox)
+    if (chk is None):
+        return
+    chk.setChecked(is_enabled)
+    QApplication.processEvents()
+
+    # Wait for the range UI (two spinboxes) to appear when enabling range
+    if is_enabled:
+        wait_until(
+            lambda: isinstance(table.cellWidget(row, 2), QWidget)
+                    and len(table.cellWidget(row, 2).findChildren(QDoubleSpinBox)) >= 2,
+            timeout_ms=500
+        )
+
+    # Set steps if provided
+    if steps is not None:
+        sp = val_cell.findChild(QSpinBox)
+        if sp is not None:
+            sp.setValue(int(steps))
+            try:
+                sp.editingFinished.emit()
+            except Exception:
+                pass
+            QApplication.processEvents()
+            wait_until(
+                lambda: isinstance(table.cellWidget(row, 2), QWidget)
+                        and len(table.cellWidget(row, 2).findChildren(QDoubleSpinBox)) >= 2,
+                timeout_ms=500
+            )
+
+    # Set start/end in distance cell if provided
+    dist_cell = table.cellWidget(row, 2)
+    if isinstance(dist_cell, QWidget):
+        spins = dist_cell.findChildren(QDoubleSpinBox)
+        # Ensure left-to-right ordering: [From, To]
+        if len(spins) >= 2:
+            spins = sorted(spins, key=lambda s: s.geometry().x())
+        if start_val is not None and spins:
+            spins[0].setValue(float(start_val))
+            try:
+                spins[0].editingFinished.emit()
+            except Exception:
+                pass
+            QApplication.processEvents()
+            dist_cell = table.cellWidget(row, 2)
+            if isinstance(dist_cell, QWidget):
+                spins = dist_cell.findChildren(QDoubleSpinBox)
+                if len(spins) >= 2:
+                    spins = sorted(spins, key=lambda s: s.geometry().x())
+        if end_val is not None and len(spins) > 1:
+            spins[1].setValue(float(end_val))
+            try:
+                spins[1].editingFinished.emit()
+            except Exception:
+                pass
+
+
+def ensure_dirs():
+    os.makedirs(os.path.join(os.getcwd(), "workspaces"), exist_ok=True)
+    os.makedirs(os.path.join(os.getcwd(), "aperatures"), exist_ok=True)
+
+
+def step_spin_to_value(spin: QDoubleSpinBox, target: float):
+    """Drive a QDoubleSpinBox to target using stepUp/stepDown, not setValue.
+    Uses a ladder of singleStep sizes for speed, then fine adjustment.
+    """
+    if not isinstance(spin, QDoubleSpinBox):
+        return
+    ladder = [10.0, 1.0, 0.1, 0.01]
+    # Ensure target within spin range
+    target = max(spin.minimum(), min(spin.maximum(), float(target)))
+    for step in ladder:
+        spin.setSingleStep(step)
+        QApplication.processEvents()
+        # Move upwards in coarse steps
+        while (target - spin.value()) >= (step - 1e-12):
+            spin.stepUp()
+            QApplication.processEvents()
+        # If overshot, step down
+        while (spin.value() - target) >= (step - 1e-12):
+            spin.stepDown()
+            QApplication.processEvents()
+    try:
+        spin.editingFinished.emit()
+    except Exception:
+        pass
+    QApplication.processEvents()
+
+
+def step_distance(table, row: int, target: float):
+    """Find the distance spinbox cell for a row and step it to target.
+    Works for single spin and for composite range widget (uses the From spin).
+    """
+    w = table.cellWidget(row, 2)
+    spin = None
+    if isinstance(w, QDoubleSpinBox):
+        spin = w
+    elif isinstance(w, QWidget):
+        spins = w.findChildren(QDoubleSpinBox)
+        if spins:
+            # Sort left-to-right, use first as 'From'
+            spin = sorted(spins, key=lambda s: s.geometry().x())[0]
+    if isinstance(spin, QDoubleSpinBox):
+        step_spin_to_value(spin, target)
+
+
+def select_row_and_wait(table, row: int, timeout_ms: int = 1000) -> bool:
+    try:
+        table.clearSelection()
+        QApplication.processEvents()
+        table.setFocus()
+        table.selectRow(int(row))
+        QApplication.processEvents()
+        return wait_until(
+            lambda: hasattr(table, 'selectionModel') and table.selectionModel() is not None and any(
+                idx.row() == row for idx in table.selectionModel().selectedRows()
+            ),
+            timeout_ms=timeout_ms,
+        )
+    except Exception:
+        return False
+
+
+def get_row_types(table) -> list[str]:
+    types: list[str] = []
+    for r in range(1, getattr(table, 'rowCount')()):
+        w = table.cellWidget(r, 1)
+        if isinstance(w, QComboBox):
+            types.append(w.currentText())
+    return types
+
+
+def get_row_names(table):  # type: ignore
+    """Return a list of element names (from column 0, QLineEdit, for rows 1+)."""
+    names = []
+    for r in range(1, getattr(table, 'rowCount')()):
+        w = table.cellWidget(r, 0)
+        if isinstance(w, QLineEdit):
+            names.append(w.text())
+    return names

@@ -21,6 +21,7 @@ from widgets.helpers import (
     to_pref_path as _to_pref_path_helper,
     normalize_path_for_display as _normalize_path_for_display,
     DEFAULT_ALLOWED_NAME_PATTERN,
+    Element as Element,
 )
 from widgets.helpers import validate_name_against, filter_to_accepted_chars
 from widgets.helpers import extract_default_suffix
@@ -34,19 +35,6 @@ GLOBAL_STEPS_DEFAULT = 1
 
 NEW_TYPE_APERTURE_RESULT = "ApertureResult"
 NEW_TYPE_TARGET_INTENSITY = "TargetIntensity"
-
-class ElementNode:
-    def __init__(self, name, elem_type, distance, focal_length=None, aperture_path=None, is_range=None, range_end=None, steps=None):
-        self.name = name
-        self.type = elem_type
-        self.distance = distance
-        self.focal_length = focal_length
-        self.aperture_path = aperture_path
-        # Screen-specific and TargetIntensity-specific
-        self.is_range = is_range  # boolean indicating if it's a range of screens
-        self.range_end = range_end if range_end is not None else distance + GLOBAL_DEFAULT_DISTANCE_MM
-        self.steps = int(steps) if steps is not None else GLOBAL_STEPS_DEFAULT
-        self.next: Optional[ElementNode] = None
 
 class PhysicalSetupVisualizer(QWidget):
     def __init__(self, parent=None):
@@ -77,15 +65,15 @@ class PhysicalSetupVisualizer(QWidget):
         self.add_aperture_btn = self.add_btn_1
         self.add_lens_btn = self.add_btn_2
         self.add_screen_btn = self.add_btn_3
-        self.del_btn = QPushButton("Delete selected element(s)")
-        self.del_btn.setEnabled(True)  # Keep enabled; handler is a no-op when nothing valid is selected
+        self.del_btn = QPushButton("Delete element")
+        self.del_btn.setEnabled(False)  # Disabled by default
         self.del_btn.clicked.connect(self.delete_selected_elements)
         btn_layout.addWidget(self.del_btn)
         btn_layout.addStretch()
         layout.addLayout(btn_layout)
         self.setLayout(layout)
         # Linked list head: always the light source
-        self.head = ElementNode("Light Source", "LightSource", 0)
+        self.head = Element("Light Source", "LightSource", 0)
         # Engine/type mapping state
         self._engine_mode = "Diffractsim Forward"
         self._type_display_list: list[str] = []
@@ -201,8 +189,8 @@ class PhysicalSetupVisualizer(QWidget):
             pass
 
     def refresh_table(self):
-        # First, coerce existing element internal types to match current engine mode
-        self._apply_engine_type_coercion_once()
+        # Do NOT coerce existing element internal types to match current engine mode
+        # self._apply_engine_type_coercion_once()  # <-- Removed to prevent unwanted conversion
         self.table.setRowCount(0)
         node = self.head
         idx = 0
@@ -229,7 +217,8 @@ class PhysicalSetupVisualizer(QWidget):
                 for disp in self._type_display_list:
                     combo.addItem(disp)
                 # Set current based on internal type -> display label mapping
-                disp_text = self._internal_to_display.get(node.type, node.type)
+                disp_key = node.type or ""
+                disp_text = self._internal_to_display.get(disp_key, node.type or "")
                 combo.setCurrentText(disp_text)
                 combo.installEventFilter(self)
                 combo.currentTextChanged.connect(lambda disp, nd=node: self._on_display_type_changed(nd, disp))
@@ -288,7 +277,7 @@ class PhysicalSetupVisualizer(QWidget):
                 steps_label = QLabel("steps:", value_widget)
                 steps_spin = QSpinBox(value_widget)
                 steps_spin.installEventFilter(self)
-                steps_spin.setRange(2, 10000)
+                steps_spin.setRange(1, 10000)  # Changed minimum from 2 to 1
                 steps_spin.setValue(int(node.steps or 10))
                 steps_label.setVisible(bool(node.is_range))
                 steps_spin.setVisible(bool(node.is_range))
@@ -324,6 +313,23 @@ class PhysicalSetupVisualizer(QWidget):
         # Notify image containers that the element list or attributes changed
         self._notify_image_containers_changed()
 
+        # --- Engine combo enable/disable logic ---
+        try:
+            parent = self.parent()
+            # Traverse up to find a parent with sys_params
+            while parent is not None and not hasattr(parent, 'sys_params'):
+                parent = parent.parent() if hasattr(parent, 'parent') else None
+            if parent is not None and hasattr(parent, 'sys_params'):
+                engine_combo = getattr(getattr(parent, 'sys_params', None), 'engine_combo', None)
+                if engine_combo is not None:
+                    # Only Light Source present: enable. Otherwise: disable.
+                    if self.table.rowCount() > 1:
+                        engine_combo.setEnabled(False)
+                    else:
+                        engine_combo.setEnabled(True)
+        except Exception:
+            pass
+
     def _apply_engine_type_coercion_once(self):
         try:
             engine = (self._engine_mode or "").strip()
@@ -347,7 +353,8 @@ class PhysicalSetupVisualizer(QWidget):
             # Walk nodes and adjust types as needed
             cur = self.head.next
             while cur is not None:
-                desired = to_internal.get(cur.type, cur.type)
+                desired_key = cur.type or ""
+                desired = to_internal.get(desired_key, cur.type or "")
                 if desired != cur.type:
                     old = cur.type
                     cur.type = desired
@@ -408,23 +415,40 @@ class PhysicalSetupVisualizer(QWidget):
         while node.next:
             node = node.next
         last_distance = node.distance
+        # Get sysparam extents if available
+        width_mm = 1.0
+        height_mm = 1.0
+        try:
+            parent = self.parent()
+            while parent is not None and not hasattr(parent, 'sys_params'):
+                parent = parent.parent() if hasattr(parent, 'parent') else None
+            sys_params = getattr(parent, 'sys_params', None) if parent is not None else None
+            if sys_params is not None:
+                width_mm = float(sys_params.extension_x.value())
+                height_mm = float(sys_params.extension_y.value())
+        except Exception:
+            pass
         if elem_type == "Aperture":
             name = self._generate_unique_default_name("Aperture")
             stored_path = self._to_pref_path(white_path)
-            new_node = ElementNode(name, "Aperture", last_distance + GLOBAL_DEFAULT_DISTANCE_MM, aperture_path=stored_path)
+            new_node = Element(name, "Aperture", last_distance + GLOBAL_DEFAULT_DISTANCE_MM, aperture_path=stored_path)
+            new_node.aperture_width_mm = float(width_mm)
+            new_node.aperture_height_mm = float(height_mm)
         elif elem_type == NEW_TYPE_APERTURE_RESULT:
             name = self._generate_unique_default_name("Aperture Result")
             stored_path = self._to_pref_path(white_path)
-            new_node = ElementNode(name, NEW_TYPE_APERTURE_RESULT, last_distance + GLOBAL_DEFAULT_DISTANCE_MM, aperture_path=stored_path)
+            new_node = Element(name, NEW_TYPE_APERTURE_RESULT, last_distance + GLOBAL_DEFAULT_DISTANCE_MM, aperture_path=stored_path)
+            new_node.aperture_width_mm = float(width_mm)
+            new_node.aperture_height_mm = float(height_mm)
         elif elem_type == "Lens":
             name = self._generate_unique_default_name("Lens")
-            new_node = ElementNode(name, "Lens", last_distance + GLOBAL_DEFAULT_DISTANCE_MM, focal_length=LENS_DEFAULT_FOCUS_MM)
+            new_node = Element(name, "Lens", last_distance + GLOBAL_DEFAULT_DISTANCE_MM, focal_length=LENS_DEFAULT_FOCUS_MM)
         elif elem_type == NEW_TYPE_TARGET_INTENSITY:
             name = self._generate_unique_default_name("Target Intensity")
-            new_node = ElementNode(name, NEW_TYPE_TARGET_INTENSITY, last_distance + GLOBAL_DEFAULT_DISTANCE_MM, is_range=False, range_end=last_distance + GLOBAL_DEFAULT_DISTANCE_MM, steps=10)
+            new_node = Element(name, NEW_TYPE_TARGET_INTENSITY, last_distance + GLOBAL_DEFAULT_DISTANCE_MM, is_range=False, range_end=last_distance + GLOBAL_DEFAULT_DISTANCE_MM, steps=10)
         else:  # Screen
             name = self._generate_unique_default_name("Screen")
-            new_node = ElementNode(name, "Screen", last_distance + GLOBAL_DEFAULT_DISTANCE_MM, is_range=False, range_end=last_distance + GLOBAL_DEFAULT_DISTANCE_MM, steps=10)
+            new_node = Element(name, "Screen", last_distance + GLOBAL_DEFAULT_DISTANCE_MM, is_range=False, range_end=last_distance + GLOBAL_DEFAULT_DISTANCE_MM, steps=10)
         node.next = new_node
         self.refresh_table()
 
@@ -445,10 +469,10 @@ class PhysicalSetupVisualizer(QWidget):
             cur = cur.next
         return generate_unique_default_name(base_type, existing)
 
-    def _is_default_generated_name(self, node: 'ElementNode') -> bool:
+    def _is_default_generated_name(self, node: 'Element') -> bool:
         return is_default_generated_element_name(getattr(node, 'name', ''))
 
-    def _name_exists(self, name: str, exclude: Optional['ElementNode'] = None) -> bool:
+    def _name_exists(self, name: str, exclude: Optional['Element'] = None) -> bool:
         cur = self.head
         while cur is not None:
             if cur is not exclude and cur.name == name:
@@ -530,6 +554,9 @@ class PhysicalSetupVisualizer(QWidget):
         elif new_type == "Aperture":
             if node.aperture_path is None:
                 node.aperture_path = ""
+                # Defaults are handles elsewhere i guess
+                # node.aperture_width_mm = None
+                # node.aperture_height_mm = None
         elif new_type == "Lens":
             if node.focal_length is None:
                 node.focal_length = LENS_DEFAULT_FOCUS_MM
@@ -555,6 +582,19 @@ class PhysicalSetupVisualizer(QWidget):
             if getattr(node, 'type', None) == 'Screen' and bool(getattr(node, 'is_range', False)):
                 if node.range_end is None or float(node.range_end) < float(node.distance):
                     node.range_end = node.distance
+                # If range_end matches distance, set steps to 1 and update spinbox
+                if float(node.range_end) == float(node.distance):
+                    node.steps = 1
+                    # Update steps spinbox in the table if visible
+                    row = self._find_row_for_node(node)
+                    if row is not None:
+                        value_widget = self.table.cellWidget(row, 3)
+                        if value_widget is not None:
+                            steps_spin = value_widget.findChild(QSpinBox)
+                            if steps_spin is not None:
+                                steps_spin.blockSignals(True)
+                                steps_spin.setValue(1)
+                                steps_spin.blockSignals(False)
         except Exception:
             pass
 
@@ -632,6 +672,15 @@ class PhysicalSetupVisualizer(QWidget):
         # Update steps visibility in-place
         steps_label.setVisible(bool(is_range))
         steps_spin.setVisible(bool(is_range))
+        # If range is enabled and from/to match, set steps to 1 and update spinbox
+        try:
+            if is_range and float(getattr(node, 'range_end', node.distance)) == float(node.distance):
+                node.steps = 1
+                steps_spin.blockSignals(True)
+                steps_spin.setValue(1)
+                steps_spin.blockSignals(False)
+        except Exception:
+            pass
         # Update the distance cell widget for this row without refreshing entire table
         row = self._find_row_for_node(node)
         if row is not None:
@@ -644,6 +693,22 @@ class PhysicalSetupVisualizer(QWidget):
         if new_end < node.distance:
             new_end = node.distance
         node.range_end = new_end
+        # If range_end matches distance, set steps to 1 and update spinbox
+        try:
+            if getattr(node, 'type', None) == 'Screen' and bool(getattr(node, 'is_range', False)):
+                if float(node.range_end) == float(node.distance):
+                    node.steps = 1
+                    row = self._find_row_for_node(node)
+                    if row is not None:
+                        value_widget = self.table.cellWidget(row, 3)
+                        if value_widget is not None:
+                            steps_spin = value_widget.findChild(QSpinBox)
+                            if steps_spin is not None:
+                                steps_spin.blockSignals(True)
+                                steps_spin.setValue(1)
+                                steps_spin.blockSignals(False)
+        except Exception:
+            pass
         self._notify_image_containers_changed()
 
     def _on_screen_steps_edited(self, node, steps):
@@ -662,8 +727,18 @@ class PhysicalSetupVisualizer(QWidget):
                 self._notify_image_containers_changed()
 
     def _update_delete_button_state(self):
-        # Always keep delete enabled; the handler checks for valid selection.
-        self.del_btn.setEnabled(True)
+        # Enable only if a non-LightSource row is selected
+        selected_rows = {idx.row() for idx in self.table.selectedIndexes()}
+        valid_rows = [r for r in selected_rows if r > 0]
+        if valid_rows:
+            self.del_btn.setEnabled(True)
+            if len(valid_rows) == 1:
+                self.del_btn.setText("Delete element")
+            else:
+                self.del_btn.setText(f"Delete {len(valid_rows)} elements")
+        else:
+            self.del_btn.setEnabled(False)
+            self.del_btn.setText("Delete element")
 
     def delete_selected_elements(self):
         # Collect selected table rows (skip Light Source at row 0)
@@ -749,16 +824,16 @@ class PhysicalSetupVisualizer(QWidget):
             if node.type == "Aperture":
                 if node.aperture_path:
                     params["image_path"] = node.aperture_path
-                    # Always include physical size for image apertures - Not using right now, but keep in for future use
-                    params["width_mm"] = 1.0
-                    params["height_mm"] = 1.0
+                    # Include physical size for image apertures; default to 1.0 mm when unspecified
+                    params["width_mm"] = node.aperture_width_mm if getattr(node, 'aperture_width_mm', None) is not None else 1.0
+                    params["height_mm"] = node.aperture_height_mm if getattr(node, 'aperture_height_mm', None) is not None else 1.0
             elif node.type == "Lens":
                 params["f"] = node.focal_length
             elif node.type == "Screen":
                 params["is_range"] = bool(node.is_range)
                 params["range_end_mm"] = float(node.range_end if node.range_end is not None else node.distance)
-                params["steps"] = int(node.steps if node.steps is not None else 10) 
-            elements.append(engine.Element(distance=node.distance, element_type=node.type.lower(), params=params, name=node.name))
+                params["steps"] = int(node.steps if node.steps is not None else 10)
+            elements.append(engine.Element(distance=node.distance, element_type=(node.type or "").lower(), params=params, name=node.name))
             node = node.next
         return elements
 

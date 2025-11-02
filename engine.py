@@ -7,7 +7,7 @@ from pathlib import Path
 from PIL import Image
 from datetime import datetime
 import time
-from widgets.helpers import slugify as _slugify, fmt_fixed as _fmt2
+from widgets.helpers import slugify as _slugify, fmt_fixed as _fmt2, Element
 
 # Preferences
 try:
@@ -269,7 +269,7 @@ def calculate_screen_images(FieldType, Wavelength, ExtentX, ExtentY, Resolution,
             if screen.get('range_start_mm') is not None:
                 f.write(f"  Range Start: {screen.get('range_start_mm')} mm\n")
             if screen.get('range_end_mm') is not None:
-                f.write(f"  Range End: {screen['range_end_mm']} mm\n")
+                f.write(f"  Range End: {screen.get('range_end_mm')} mm\n")
             if screen.get('steps') is not None:
                 f.write(f"  Steps: {screen['steps']}\n")
             f.write(f"  Filename: {screen['filename']}\n")
@@ -285,17 +285,3 @@ def calculate_screen_images(FieldType, Wavelength, ExtentX, ExtentY, Resolution,
         rgb_uint8 = np.ascontiguousarray(rgb_uint8)
     # QImage expects shape (height, width, 3)
     return rgb_uint8
-
-class Element:
-    """
-    This is a generic class for optical elements in the simulation.
-    Every element has to have a distance (> 0 float).
-    A type (string) to identify the element (eg. "lens", "aperture", etc.).
-    Additional parameters can be stored in a dictionary. For apertures, these are the image path, and a bool for inversion, and size in mm
-    For lens, its focal distance in mm.
-    """
-    def __init__(self, distance, element_type, params=None, name=None):
-        self.distance = distance
-        self.element_type = element_type
-        self.params = params or {}
-        self.name = name

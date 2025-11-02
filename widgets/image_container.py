@@ -1,6 +1,6 @@
-from PyQt6.QtWidgets import QVBoxLayout, QLabel, QPushButton, QSizePolicy, QWidget, QHBoxLayout
+from PyQt6.QtWidgets import QVBoxLayout, QLabel, QPushButton, QSizePolicy, QWidget, QHBoxLayout, QProgressBar
 from PyQt6.QtGui import QPixmap, QImage, QMovie, QImageReader
-from PyQt6.QtCore import Qt, QSize
+from PyQt6.QtCore import Qt, QSize, QTimer
 import threading
 import os
 from pathlib import Path
@@ -29,6 +29,15 @@ class ImageContainer(QWidget):
         self._title_label.setStyleSheet("font-weight: bold;")
         header.addWidget(self._title_label)
         header.addStretch()
+        # Date label for screen images (now in header)
+        self.screen_date_label = QLabel("")
+        self.screen_date_label.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight)
+        self.screen_date_label.setStyleSheet("color: #666; font-size: 10pt; margin-right: 8px;")
+        if self._is_screen_panel():
+            header.addWidget(self.screen_date_label)
+        else:
+            self.screen_date_label.setVisible(False)
+        header.addStretch()
         self.info_label = QLabel("")
         self.info_label.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight)
         header.addWidget(self.info_label)
@@ -52,14 +61,36 @@ class ImageContainer(QWidget):
         self.image_label.linkActivated.connect(self._on_empty_link)
         layout.addWidget(self.image_label)
 
+        # Progress UI (moved here, under image_label)
+        self.progress_label = QLabel("")
+        self.progress_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setTextVisible(True)
+        self.progress_label.setVisible(False)
+        self.progress_bar.setVisible(False)
+        layout.addWidget(self.progress_label)
+        layout.addWidget(self.progress_bar)
+
         # Solve button
         self.solve_button = QPushButton("Solve")
         self.solve_button.clicked.connect(self.solve_async)
         layout.addWidget(self.solve_button)
 
+        # Internal progress state
+        self._progress_timer: QTimer | None = None
+        self._progress_total: int = 0
+        self._progress_initial_pngs: int = 0
+        self._progress_dir: Path | None = None
+
         # Initial state
         self.refresh_from_visualizer_change()
         self._set_solve_enabled(True)
+        # --- Ensure correct initial Solve button visibility on creation ---
+        # On creation, engine combo may not be fully initialized, so force correct state:
+        if self._is_aperture_panel():
+            self.solve_button.setVisible(False)
+        elif self._is_screen_panel():
+            self.solve_button.setVisible(True)
 
     # --- Public API for visualizer to call ---
     def refresh_from_visualizer_change(self):
@@ -70,25 +101,92 @@ class ImageContainer(QWidget):
         else:
             self._current_index = max(0, min(self._current_index, len(self._items) - 1))
         self._update_ui_from_selection()
+        self._update_solve_button_visibility()
 
     # --- Solve flow ---
     def _is_release_build(self) -> bool:
         return bool(os.environ.get("RELEASE_BUILD"))
 
     def _set_solve_enabled(self, enabled: bool):
-        # In development, keep the Solve button enabled to avoid UX dead-ends
-        if self._is_release_build():
-            self.solve_button.setEnabled(bool(enabled))
-        else:
-            self.solve_button.setEnabled(True)
+        self.solve_button.setEnabled(bool(enabled))
+        self.nav_up_btn.setEnabled(bool(enabled) and len(self._items) > 1)
+        self.nav_down_btn.setEnabled(bool(enabled) and len(self._items) > 1)
 
     def solve_async(self):
         if self._solve_in_progress:
             return
+        # Prepare progress for screen solves by estimating total frames and baseline PNG count
+        try:
+            if self._is_screen_panel():
+                tab = self._find_workspace_tab()
+                vis = getattr(tab, 'visualizer', None) if tab else None
+                elements = vis.export_elements_for_engine() if (vis and hasattr(vis, 'export_elements_for_engine')) else []
+                total = 0
+                for e in elements:
+                    et = getattr(e, 'element_type', None) or ""
+                    if str(et).lower() == 'screen':
+                        p = getattr(e, 'params', {}) or {}
+                        if bool(p.get('is_range', False)):
+                            steps = int(p.get('steps', 0) or 0)
+                            total += max(1, steps)
+                        else:
+                            total += 1
+                self._progress_total = int(total)
+                self._progress_dir = self._screen_results_dir()
+                try:
+                    before = list(self._progress_dir.rglob("*.png"))
+                    self._progress_initial_pngs = len(before)
+                except Exception:
+                    self._progress_initial_pngs = 0
+                if self._progress_total > 0:
+                    self._show_progress(0, self._progress_total)
+                    if self._progress_timer is None:
+                        self._progress_timer = QTimer(self)
+                        self._progress_timer.timeout.connect(self._progress_poll)
+                    self._progress_timer.start(250)
+        except Exception:
+            # Non-fatal: progress UI is best-effort
+            pass
         self._solve_in_progress = True
         self._set_solve_enabled(False)
         self.image_label.setText("Calculating...")
         threading.Thread(target=self._fetch_image, daemon=True).start()
+
+    def _progress_poll(self):
+        try:
+            if self._progress_dir is None or self._progress_total <= 0:
+                return
+            current = list(self._progress_dir.rglob("*.png"))
+            done = max(0, len(current) - int(self._progress_initial_pngs))
+            self._show_progress(done, self._progress_total)
+            if done >= self._progress_total and self._progress_timer is not None:
+                self._progress_timer.stop()
+        except Exception:
+            pass
+
+    def _show_progress(self, done: int, total: int):
+        try:
+            done_i = int(max(0, done))
+            total_i = int(max(0, total))
+            self.progress_label.setVisible(True)
+            self.progress_bar.setVisible(True)
+            self.progress_label.setText(f"Screen {done_i} out of {total_i}.")
+            self.progress_bar.setRange(0, max(1, total_i))
+            self.progress_bar.setValue(min(done_i, total_i))
+        except Exception:
+            pass
+
+    def _progress_stop(self):
+        try:
+            if self._progress_timer is not None:
+                self._progress_timer.stop()
+        except Exception:
+            pass
+        self.progress_label.setVisible(False)
+        self.progress_bar.setVisible(False)
+        self._progress_total = 0
+        self._progress_initial_pngs = 0
+        self._progress_dir = None
 
     def _fetch_image(self):
         # Gather context from workspace
@@ -188,6 +286,8 @@ class ImageContainer(QWidget):
             self._update_ui_from_selection()
         else:
             self.update_image()
+        # Stop and hide progress when solve completes
+        self._progress_stop()
         self._solve_in_progress = False
         self._set_solve_enabled(True)
 
@@ -243,6 +343,8 @@ class ImageContainer(QWidget):
             self.image_label.setText(f"No {kind.lower()}s yet. Click <a href='add'>add one</a> to create.")
             self._pixmap = None
             self.image_label.setPixmap(QPixmap())
+            if self._is_screen_panel():
+                self.screen_date_label.setText("")
             return
         # Show current item
         cur = self._items[self._current_index]
@@ -250,8 +352,11 @@ class ImageContainer(QWidget):
         self.info_label.setText(f"{name}  ({self._current_index+1}/{count})")
         if self._is_aperture_panel():
             self._show_aperture_image(cur)
+            self.screen_date_label.setText("")
         else:
             self._show_latest_screen_image_for_item(cur)
+            # Update date label for screen panel
+            self._update_screen_date_label()
 
     def _on_empty_link(self, href: str):
         if href != 'add':
@@ -306,7 +411,7 @@ class ImageContainer(QWidget):
             self._pixmap = None
             self.image_label.setPixmap(QPixmap())
 
-    def _slug(self, nm: str | None) -> str:
+    def _slug(self, nm: str | None) -> str: # TODO: use helpers class
         return _slugify(nm)
 
     def _screen_results_dir(self) -> Path:
@@ -330,7 +435,7 @@ class ImageContainer(QWidget):
             self._saved_images = sorted(directory.glob("*.png"), key=lambda p: p.stat().st_mtime)
             self._saved_gifs = sorted(directory.glob("*.gif"), key=lambda p: p.stat().st_mtime)
 
-    def _fmt2(self, v: float) -> str:
+    def _fmt2(self, v: float) -> str: # TODO: use helpers class
         return _fmt2(v)
 
     def _clear_movie(self):
@@ -500,3 +605,43 @@ class ImageContainer(QWidget):
         else:
             # Keep whatever text content is set for empty-state messages
             pass
+
+    def _update_solve_button_visibility(self):
+        # Hide Solve button on aperture side if engine is Diffractsim Forward, show otherwise
+        tab = self._find_workspace_tab()
+        engine_name = None
+        if tab and hasattr(tab, 'sys_params'):
+            try:
+                engine_name = tab.sys_params.engine_combo.currentText()
+            except Exception:
+                engine_name = None
+        is_forward = (engine_name == "Diffractsim Forward")
+        if self._is_aperture_panel():
+            self.solve_button.setVisible(not is_forward)
+        elif self._is_screen_panel():
+            self.solve_button.setVisible(is_forward)
+        else:
+            self.solve_button.setVisible(False)
+
+    def _update_screen_date_label(self):
+        # Only for screen panel
+        if not self._is_screen_panel():
+            self.screen_date_label.setText("")
+            return
+        # Find the most recent PNG or GIF in the results dir for this workspace
+        from datetime import datetime
+        directory = self._screen_results_dir()
+        latest_time = None
+        for ext in ("*.png", "*.gif"):
+            for p in directory.rglob(ext):
+                try:
+                    t = p.stat().st_mtime
+                    if latest_time is None or t > latest_time:
+                        latest_time = t
+                except Exception:
+                    pass
+        if latest_time is not None:
+            dt = datetime.fromtimestamp(latest_time)
+            self.screen_date_label.setText(f"Screens made: {dt.strftime('%Y-%m-%d %H:%M:%S')}")
+        else:
+            self.screen_date_label.setText("Screens made: N/A")

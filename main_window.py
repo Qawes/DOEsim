@@ -84,7 +84,7 @@ class MainWindow(QMainWindow):
     # Edit this regex pattern to change allowed characters
     WORKSPACE_NAME_ALLOWED_CHARS = r'^[a-zA-Z0-9_ -]+$'
     
-    def __init__(self):
+    def __init__(self, force_single_workspace: bool = False):
         super().__init__()
         self.setWindowTitle("DOEsim GUI Proof of Concept")
         self.setWindowIcon(QIcon("fzp_icon.ico")) 
@@ -92,6 +92,8 @@ class MainWindow(QMainWindow):
         self._createMenuBar()
         # Central stacked widget: placeholder when no tabs, tabs when present
         self._central_stack = QStackedWidget(self)
+        # Startup override flag
+        self._force_single_workspace = bool(force_single_workspace)
         # Rich-text placeholder with clickable actions
         self._placeholder = QLabel(
             "<div style='font-size:18pt; font-style:italic; color:#777777;'>" #  font-weight:bold;
@@ -123,8 +125,9 @@ class MainWindow(QMainWindow):
         # Restore window geometry first
         self._restore_window_geometry()
         # Conditionally open an empty workspace tab on startup
-        if bool(getpref(SET_OPEN_TAB_ON_STARTUP)):
-            self.add_new_tab()
+        if self._force_single_workspace or bool(getpref(SET_OPEN_TAB_ON_STARTUP)):
+            if self.tabs.count() == 0:
+                self.add_new_tab()
         # elif bool(getpref(SET_AUTO_OPEN_NEW_WORKSPACE)):
         #     self.add_new_tab()
         # Update placeholder visibility either way
@@ -188,6 +191,8 @@ class MainWindow(QMainWindow):
                     entry['focal_length_mm'] = float(node.focal_length) if node.focal_length is not None else None
                 elif node.type == 'Aperture':
                     entry['aperture_path'] = node.aperture_path or ""
+                    entry['aperture_width_mm'] = float(getattr(node, 'aperture_width_mm', 1.0) or 1.0)
+                    entry['aperture_height_mm'] = float(getattr(node, 'aperture_height_mm', 1.0) or 1.0)
                 elif node.type == 'Screen':
                     entry['is_range'] = bool(node.is_range) if node.is_range is not None else False
                     entry['range_end_mm'] = float(node.range_end) if node.range_end is not None else float(node.distance)
@@ -228,7 +233,7 @@ class MainWindow(QMainWindow):
         try:
             import json
             import os
-            from widgets.physical_setup_visualizer import ElementNode
+            from widgets.helpers import Element
             # Import reverse-mode constants to recognize types if present
             from widgets.physical_setup_visualizer import NEW_TYPE_APERTURE_RESULT, NEW_TYPE_TARGET_INTENSITY
 
@@ -308,18 +313,22 @@ class MainWindow(QMainWindow):
                     ename = e.get('name') or f"{etype}"
                     dist = float(e.get('distance_mm', 0.0))
                     if etype == 'Aperture':
-                        node = ElementNode(ename, 'Aperture', dist, aperture_path=e.get('aperture_path') or "")
+                        node = Element(ename, 'Aperture', dist, aperture_path=e.get('aperture_path') or "")
+                        node.aperture_width_mm = float(e.get('aperture_width_mm', 1.0) or 1.0)
+                        node.aperture_height_mm = float(e.get('aperture_height_mm', 1.0) or 1.0)
                     elif etype == 'Lens':
-                        node = ElementNode(ename, 'Lens', dist, focal_length=e.get('focal_length_mm'))
+                        node = Element(ename, 'Lens', dist, focal_length=e.get('focal_length_mm'))
                     elif etype == 'Screen':
                         is_range = bool(e.get('is_range', False))
                         range_end = e.get('range_end_mm')
                         steps = e.get('steps')
-                        node = ElementNode(ename, 'Screen', dist, is_range=is_range, range_end=range_end, steps=steps)
+                        node = Element(ename, 'Screen', dist, is_range=is_range, range_end=range_end, steps=steps)
                     elif etype in (NEW_TYPE_APERTURE_RESULT, 'ApertureResult'):
-                        node = ElementNode(ename, NEW_TYPE_APERTURE_RESULT, dist, aperture_path=e.get('aperture_path') or "")
+                        node = Element(ename, NEW_TYPE_APERTURE_RESULT, dist, aperture_path=e.get('aperture_path') or "")
+                        node.aperture_width_mm = float(e.get('aperture_width_mm', 1.0) or 1.0)
+                        node.aperture_height_mm = float(e.get('aperture_height_mm', 1.0) or 1.0)
                     elif etype in (NEW_TYPE_TARGET_INTENSITY, 'TargetIntensity'):
-                        node = ElementNode(ename, NEW_TYPE_TARGET_INTENSITY, dist, is_range=False)
+                        node = Element(ename, NEW_TYPE_TARGET_INTENSITY, dist, is_range=False)
                     else:
                         continue
                     tail.next = node

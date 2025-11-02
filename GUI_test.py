@@ -12,6 +12,16 @@ TESTING_EXTENSION_X_MM = 6
 TESTING_EXTENSION_Y_MM = 6
 TESTING_RESOLUTION_PX_PER_MM = 128
 
+'''
+------------------------------------------------------
+ Run tests in headless:
+
+python -u GUI_test.py --headless
+
+------------------------------------------------------
+'''
+
+
 # Allow running headless via: python GUI_test.py --headless
 HEADLESS = "--headless" in sys.argv
 if HEADLESS:
@@ -33,6 +43,22 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt
 
+# Import shared helpers
+from widgets.helpers import (
+    wait_until,
+    find_row_by_name,
+    set_name,
+    set_distance,
+    set_aperture_image_path,
+    set_screen_range,
+    ensure_dirs,
+    step_spin_to_value,
+    step_distance,
+    select_row_and_wait,
+    get_row_types,
+    get_row_names,
+)
+
 from main_window import MainWindow, WorkspaceTab
 from widgets.system_parameters_widget import (
     DEFAULT_WAVELENGTH_NM,
@@ -42,208 +68,6 @@ from widgets.system_parameters_widget import (
 )
 
 # --- Concise test result logging (per-test in tearDown) ---
-
-def wait_until(predicate, timeout_ms=5000, step_ms=25):
-    start = time.time()
-    while (time.time() - start) * 1000 < timeout_ms:
-        QApplication.processEvents()
-        try:
-            if predicate():
-                return True
-        except Exception:
-            pass
-        time.sleep(step_ms / 1000.0)
-    return False
-
-
-def find_row_by_name(table, name: str) -> int:
-    for r in range(table.rowCount()):
-        w = table.cellWidget(r, 0)
-        if isinstance(w, QLineEdit) and w.text() == name:
-            return r
-    return -1
-
-
-def set_name(table, row: int, new_name: str):
-    editor = table.cellWidget(row, 0)
-    assert isinstance(editor, QLineEdit)
-    editor.setText(new_name)
-    try:
-        editor.editingFinished.emit()
-    except Exception:
-        pass
-
-
-def set_distance(table, row: int, new_dist: float):
-    w = table.cellWidget(row, 2)
-    # If it's a single QDoubleSpinBox
-    if isinstance(w, QDoubleSpinBox):
-        w.setValue(new_dist)
-        try:
-            w.editingFinished.emit()
-        except Exception:
-            pass
-        return
-    # If it's a composite widget (range enabled): the "From" editor is the first QDoubleSpinBox
-    if isinstance(w, QWidget):
-        spins = w.findChildren(QDoubleSpinBox)
-        if spins:
-            spins[0].setValue(new_dist)
-            try:
-                spins[0].editingFinished.emit()
-            except Exception:
-                pass
-
-
-def set_aperture_image_path(table, row: int, path: str):
-    type_w = table.cellWidget(row, 1)
-    if not isinstance(type_w, QComboBox):
-        return
-    if "aperture" not in type_w.currentText().strip().lower():
-        return
-    cell = table.cellWidget(row, 3)
-    if cell is None:
-        return
-    line = cell.findChild(QLineEdit)
-    if line is None:
-        return
-    line.setText(path)
-    try:
-        line.editingFinished.emit()
-    except Exception:
-        pass
-
-
-def set_screen_range(table, row: int, is_enabled: bool, start_val: float | None = None, end_val: float | None = None, steps: int | None = None):
-    # Toggle the checkbox
-    val_cell = table.cellWidget(row, 3)
-    if val_cell is None:
-        return
-    chk = val_cell.findChild(QCheckBox)
-    if chk is None:
-        return
-    chk.setChecked(is_enabled)
-    QApplication.processEvents()
-
-    # Wait for the range UI (two spinboxes) to appear when enabling range
-    if is_enabled:
-        wait_until(
-            lambda: isinstance(table.cellWidget(row, 2), QWidget)
-                    and len(table.cellWidget(row, 2).findChildren(QDoubleSpinBox)) >= 2,
-            timeout_ms=500
-        )
-
-    # Set steps if provided
-    if steps is not None:
-        from PyQt6.QtWidgets import QSpinBox
-        sp = val_cell.findChild(QSpinBox)
-        if sp is not None:
-            sp.setValue(int(steps))
-            try:
-                sp.editingFinished.emit()
-            except Exception:
-                pass
-            # steps change may rebuild the row; ensure widgets are recreated
-            QApplication.processEvents()
-            wait_until(
-                lambda: isinstance(table.cellWidget(row, 2), QWidget)
-                        and len(table.cellWidget(row, 2).findChildren(QDoubleSpinBox)) >= 2,
-                timeout_ms=500
-            )
-
-    # Set start/end in distance cell if provided
-    dist_cell = table.cellWidget(row, 2)
-    if isinstance(dist_cell, QWidget):
-        spins = dist_cell.findChildren(QDoubleSpinBox)
-        # Ensure left-to-right ordering: [From, To]
-        if len(spins) >= 2:
-            spins = sorted(spins, key=lambda s: s.geometry().x())
-        if start_val is not None and spins:
-            spins[0].setValue(float(start_val))
-            try:
-                spins[0].editingFinished.emit()
-            except Exception:
-                pass
-            # Setting start may rebuild the row; reacquire the spinboxes
-            QApplication.processEvents()
-            dist_cell = table.cellWidget(row, 2)
-            if isinstance(dist_cell, QWidget):
-                spins = dist_cell.findChildren(QDoubleSpinBox)
-                if len(spins) >= 2:
-                    spins = sorted(spins, key=lambda s: s.geometry().x())
-        if end_val is not None and len(spins) > 1:
-            spins[1].setValue(float(end_val))
-            try:
-                spins[1].editingFinished.emit()
-            except Exception:
-                pass
-
-
-def ensure_dirs():
-    os.makedirs(os.path.join(os.getcwd(), "workspaces"), exist_ok=True)
-    os.makedirs(os.path.join(os.getcwd(), "aperatures"), exist_ok=True)
-
-
-def step_spin_to_value(spin: QDoubleSpinBox, target: float):
-    """Drive a QDoubleSpinBox to target using stepUp/stepDown, not setValue.
-    Uses a ladder of singleStep sizes for speed, then fine adjustment.
-    """
-    if not isinstance(spin, QDoubleSpinBox):
-        return
-    ladder = [10.0, 1.0, 0.1, 0.01]
-    # Ensure target within spin range
-    target = max(spin.minimum(), min(spin.maximum(), float(target)))
-    for step in ladder:
-        spin.setSingleStep(step)
-        QApplication.processEvents()
-        # Move upwards in coarse steps
-        while (target - spin.value()) >= (step - 1e-12):
-            spin.stepUp()
-            QApplication.processEvents()
-        # If overshot, step down
-        while (spin.value() - target) >= (step - 1e-12):
-            spin.stepDown()
-            QApplication.processEvents()
-    try:
-        spin.editingFinished.emit()
-    except Exception:
-        pass
-    QApplication.processEvents()
-
-
-def step_distance(table, row: int, target: float):
-    """Find the distance spinbox cell for a row and step it to target.
-    Works for single spin and for composite range widget (uses the From spin).
-    """
-    w = table.cellWidget(row, 2)
-    spin = None
-    if isinstance(w, QDoubleSpinBox):
-        spin = w
-    elif isinstance(w, QWidget):
-        spins = w.findChildren(QDoubleSpinBox)
-        if spins:
-            # Sort left-to-right, use first as 'From'
-            spins = sorted(spins, key=lambda s: s.geometry().x())
-            spin = spins[0]
-    if isinstance(spin, QDoubleSpinBox):
-        step_spin_to_value(spin, target)
-
-
-def select_row_and_wait(table, row: int, timeout_ms: int = 1000) -> bool:
-    try:
-        table.clearSelection()
-        QApplication.processEvents()
-        table.setFocus()
-        table.selectRow(int(row))
-        QApplication.processEvents()
-        return wait_until(
-            lambda: hasattr(table, 'selectionModel') and table.selectionModel() is not None and any(
-                idx.row() == row for idx in table.selectionModel().selectedRows()
-            ),
-            timeout_ms=timeout_ms,
-        )
-    except Exception:
-        return False
 
 
 class GUITestCase(unittest.TestCase):
@@ -261,7 +85,7 @@ class GUITestCase(unittest.TestCase):
             existing_app = QApplication(sys.argv)
         cls.app = cast(QApplication, existing_app)
         # Create the main window
-        cls.window = MainWindow()
+        cls.window = MainWindow(force_single_workspace=True)
         cls.window.show()
         wait_until(lambda: True, 200)
         # Speed up tests by monkey-patching the engine calculation to a fast stub
@@ -360,30 +184,58 @@ class GUITestCase(unittest.TestCase):
         self.assertEqual(sys_params.extension_y.value(), TESTING_EXTENSION_Y_MM)
         self.assertEqual(sys_params.resolution.value(), TESTING_RESOLUTION_PX_PER_MM)
 
-    # 3) add A/L/S then delete one-by-one
-    def test_03_add_three_then_delete_one_by_one(self):
+    # 3) single deletion sequence per spec
+    def test_03_single_deletion(self):
         window = cast(MainWindow, self.window)
         vw = cast(WorkspaceTab, window.tabs.widget(0)).visualizer
         table = vw.table
+        # Add A, A, L, L, S, S
+        vw.add_aperture_btn.click()
         vw.add_aperture_btn.click()
         vw.add_lens_btn.click()
+        vw.add_lens_btn.click()
         vw.add_screen_btn.click()
-        # Wait for the table to fully populate before proceeding
-        self.assertTrue(wait_until(lambda: table.rowCount() == 4, 1000), "Table did not reach 4 rows after adding elements")
-        self.assertEqual(table.rowCount(), 4)  # Strict Equality in element table rows!
-        with patch.object(QMessageBox, 'question', return_value=QMessageBox.StandardButton.Yes):
-            for idx in range(3):
-                # Ensure selection is applied before deleting
-                self.assertTrue(select_row_and_wait(table, 1, timeout_ms=1000), "Row 1 not selected before delete")
-                prev_rows = table.rowCount()
+        vw.add_screen_btn.click()
+        self.assertTrue(wait_until(lambda: table.rowCount() == 7, 1500), "Table did not reach 7 rows after adding elements")
+        # Name them A1, A2, L1, L2, S1, S2 (rows 1..6)
+        set_name(table, 1, "A1")
+        set_name(table, 2, "A2")
+        set_name(table, 3, "L1")
+        set_name(table, 4, "L2")
+        set_name(table, 5, "S1")
+        set_name(table, 6, "S2")
+        self.assertEqual(get_row_types(table), ["Aperture", "Aperture", "Lens", "Lens", "Screen", "Screen"])
+        def _delete_by_name(nm: str):
+            row = find_row_by_name(table, nm)
+            self.assertNotEqual(row, -1, f"Row not found for element '{nm}'")
+            table.clearSelection()
+            table.selectRow(row)
+            with patch.object(QMessageBox, 'question', return_value=QMessageBox.StandardButton.Yes):
                 vw.del_btn.click()
-                expected_rows = prev_rows - 1
-                self.assertTrue(
-                    wait_until(lambda e=expected_rows: table.rowCount() == e, 2000),
-                    f"Expected {expected_rows} rows after deletion {idx + 1}, got {table.rowCount()}"
-                )
-                self.assertEqual(table.rowCount(), expected_rows)
-        self.assertEqual(table.rowCount(), 1)
+        # delete A1 -> expect A, L, L, S, S (rowCount 6)
+        _delete_by_name("A1")
+        self.assertTrue(wait_until(lambda: table.rowCount() == 6, 1000))
+        self.assertEqual(get_row_types(table), ["Aperture", "Lens", "Lens", "Screen", "Screen"])
+        # delete S2 -> expect A, L, L, S (rowCount 5)
+        _delete_by_name("S2")
+        self.assertTrue(wait_until(lambda: table.rowCount() == 5, 1000))
+        self.assertEqual(get_row_types(table), ["Aperture", "Lens", "Lens", "Screen"])
+        # delete L1 -> expect A, L, S (rowCount 4)
+        _delete_by_name("L1")
+        self.assertTrue(wait_until(lambda: table.rowCount() == 4, 1000))
+        self.assertEqual(get_row_types(table), ["Aperture", "Lens", "Screen"])
+        # delete A2 -> expect L, S (rowCount 3)
+        _delete_by_name("A2")
+        self.assertTrue(wait_until(lambda: table.rowCount() == 3, 1000))
+        self.assertEqual(get_row_types(table), ["Lens", "Screen"])
+        # delete L2 -> expect S (rowCount 2)
+        _delete_by_name("L2")
+        self.assertTrue(wait_until(lambda: table.rowCount() == 2, 1000))
+        self.assertEqual(get_row_types(table), ["Screen"])
+        # delete S1 -> expect empty (rowCount 1)
+        _delete_by_name("S1")
+        self.assertTrue(wait_until(lambda: table.rowCount() == 1, 1000))
+        self.assertEqual(get_row_types(table), [])
 
     # 4) add A/L/S then multi-delete by index
     def test_04_add_three_then_batch_delete(self):
@@ -616,7 +468,7 @@ class GUITestCase(unittest.TestCase):
         with patch.object(_QMB, 'question', return_value=_QMB.StandardButton.Yes):
             vw.del_btn.click()
         # remaining order and types
-        self.assertEqual(get_order(), ["A2", "A1"]) 
+        self.assertEqual(get_row_names(table), ["A2", "A1"]) 
         self.assertEqual(cast(QComboBox, table.cellWidget(find_row_by_name(table, "A2"), 1)).currentText(), "Screen")
         self.assertEqual(cast(QComboBox, table.cellWidget(find_row_by_name(table, "A1"), 1)).currentText(), "Aperture")
 

@@ -8,30 +8,19 @@ FEAT - add fifth column (another value)
 MISC - go over name change error tooltip
      - possibly add an option to use relative distances instead of placement - Add moving arrows to elements
      - simulation should not run when aperture with empty path is present
-     - manage delete button enabled state
      - underflowing spinbox limit forces element to switch places .\bug.mkv
-     - is screen range start adn end are equal, force step to be one
-     - make solve buttons work! (find out how to do global release flag)
-     - disable aperture solve btn for now
      - add path option for sim_results folder
      - localization . and , 
      - clamp numberfield value to min/max instead of rejecting it
      - light gray as bg
      - apertures override each other - some finicky workaround is needed :(
-     - set lightsource distance to -inf, and make numberfield minimums zero
      - investigate aperture rotated 180deg
-     - make macro for copying diffracsim folder, fzp_icon and aperture folder when compiling
-     - making a screen range sometimes results in invalid range end. clamp to start dist
-     - add calculation progress based on number of screens
-     - opening pref while soolution is done and gif playing crashes
+     - opening pref while solution is done and gif playing crashes
      - test for renaming things with illegal chars and bad names (duplicate, empty, short, etc.)
      - move imports and DEFAULT to top if possible
 
 
 AI Model experience:
-- GPT 4.1 (free model) adequate, can code with very strict and explicit instructions
+- GPT 4.1 (free model) adequate, can code with very strict and explicit instructions, good for smaller implementations, and finding functions hidden somewhere in the project. also doesnt eat into the budget
 - Sonnet 4.5 (paid) Limited usage, due to frequent slowdowns / loops. For every edit it goes aroud multiple times for a file, always forgetting newlines. Maybe Python language issue? Creates lots of files, tries to run cmd scripts, even if explicitly told not to.
 - GPT 5 (paid) Slow, sometimes takes really long, not too verbose with every step its doing. Usually manages to solve the query, doesnt generate infinite files. Just invisible (positive)
-
-
-Based on the system parameter engine, different pools of elements should be visible when adding elements to the table. for diffractsim forward, the combobox items should be the already available Apertue, Lens and Screen. for diffractsim reverse, it should be Aperture Result, Lens(the one already implemented) and Target Intensity.  for bitmap reverse, it should be Aperture Result, Lens and Target Intensity.
