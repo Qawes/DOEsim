@@ -27,6 +27,9 @@ MISC - make polychromatic selection text unavailable
      - set lightsource distance to -inf, and make numberfield minimums zero
      - investigate aperture rotated 180deg
      - make macro for copying diffracsim folder, fzp_icon and aperture folder when compiling
+     - making a screen range sometimes results in invalid range end. clamp to start dist
+     - add calculation progress based on number of screens
+     - opening pref while soolution is done and gif playing crashes
 
 
 

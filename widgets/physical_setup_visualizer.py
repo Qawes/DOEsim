@@ -154,6 +154,12 @@ class PhysicalSetupVisualizer(QWidget):
             dist_to.setDecimals(3)
             dist_to.setSuffix(" mm")
             dist_to.setValue(node.range_end if node.range_end is not None else node.distance)
+            # Ensure the end cannot go below the start (min tracks start)
+            try:
+                dist_to.setMinimum(dist_from.value())
+                dist_from.valueChanged.connect(lambda v, w=dist_to: self._update_range_to_min(w, v))
+            except Exception:
+                pass
             dist_to.editingFinished.connect(lambda nd=node, w=dist_to: self._on_screen_range_end_edited(nd, w.value()))
             hl.addWidget(from_lbl)
             hl.addWidget(dist_from)
@@ -169,6 +175,15 @@ class PhysicalSetupVisualizer(QWidget):
             dist_spin.setSuffix(" mm")
             dist_spin.editingFinished.connect(lambda nd=node, w=dist_spin: self._on_distance_edited(nd, w.value()))
             return dist_spin
+
+    def _update_range_to_min(self, to_widget: QDoubleSpinBox, new_from: float):
+        """Keep the 'To' spinbox minimum in sync with the 'From' value and clamp if needed."""
+        try:
+            to_widget.setMinimum(float(new_from))
+            if to_widget.value() < float(new_from):
+                to_widget.setValue(float(new_from))
+        except Exception:
+            pass
 
     def refresh_table(self):
         self.table.setRowCount(0)
@@ -437,6 +452,13 @@ class PhysicalSetupVisualizer(QWidget):
             cur = cur.next
 
         node.distance = new_distance
+        # If this is a range screen, ensure the end distance is not below the start
+        try:
+            if getattr(node, 'type', None) == 'Screen' and bool(getattr(node, 'is_range', False)):
+                if node.range_end is None or float(node.range_end) < float(node.distance):
+                    node.range_end = node.distance
+        except Exception:
+            pass
 
         # Remove node from current list (if present)
         prev = self.head

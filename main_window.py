@@ -1,5 +1,5 @@
 from PyQt6.QtWidgets import QMainWindow, QTabWidget, QSplitter, QVBoxLayout, QMessageBox, QMenuBar, QMenu, QWidget, QInputDialog, QLineEdit, QFileDialog, QLabel, QStackedWidget
-from PyQt6.QtCore import Qt, QSettings, QUrl
+from PyQt6.QtCore import Qt, QSettings, QUrl, QTimer
 from PyQt6.QtGui import QIcon, QDesktopServices
 from widgets.system_parameters_widget import SystemParametersWidget
 from widgets.physical_setup_visualizer import PhysicalSetupVisualizer
@@ -101,6 +101,8 @@ class MainWindow(QMainWindow):
         self.tabs.setTabsClosable(True)  # Enable close buttons on tabs
         self.tabs.tabCloseRequested.connect(self.close_tab)
         self.tabs.tabBarDoubleClicked.connect(self.rename_tab)
+        # Context menu on tabs: right-click to rename or close (deferred to ensure tab bar exists)
+        QTimer.singleShot(0, self._setup_tab_context_menu)
         self._central_stack.addWidget(self._placeholder)
         self._central_stack.addWidget(self.tabs)
         self.setCentralWidget(self._central_stack)
@@ -149,6 +151,7 @@ class MainWindow(QMainWindow):
             # System params
             sys_params = tab.sys_params
             params = {
+                'engine': sys_params.engine_combo.currentText(),
                 'field_type': sys_params.field_type.currentText(),
                 'wavelength_nm': float(sys_params.wavelength.value()),
                 'extent_x_mm': float(sys_params.extension_x.value()),
@@ -231,16 +234,28 @@ class MainWindow(QMainWindow):
             # Determine unique tab name BEFORE adding the tab
             desired_name = data.get('workspace_name') or "Workspace"
             name = desired_name
-            if self.validate_workspace_name(name) is not True:
-                # Try to make it acceptable/unique by appending a counter
+            # Capture validation reason for messaging
+            validation_result = self.validate_workspace_name(name)
+            rename_reason = None if (validation_result is True) else validation_result
+            if validation_result is not True:
+                # If base ends with <delim><number> where <delim> is ' ', '-', or '_', increment that number; otherwise append _2 and increment
                 base = desired_name or "Workspace"
-                counter = 2
+                m = re.match(r'^(.*?)([ _-])(\d+)$', base)
+                if m:
+                    prefix = m.group(1)
+                    delim = m.group(2)
+                    counter = int(m.group(3)) + 1
+                else:
+                    prefix = base
+                    delim = '_'
+                    counter = 2
                 while True:
-                    candidate = f"{base} ({counter})"
+                    candidate = f"{prefix}{delim}{counter}"
                     if self.validate_workspace_name(candidate) is True:
                         name = candidate
                         break
                     counter += 1
+            was_renamed = (name != desired_name)
 
             # Create a new workspace tab and select it
             new_tab = WorkspaceTab()
@@ -250,9 +265,22 @@ class MainWindow(QMainWindow):
             # Apply saved layout (splitters and table columns)
             self._apply_saved_layout_to_tab(new_tab)
 
+            # If the loaded name had to be adjusted, inform the user briefly
+            if was_renamed:
+                msg = f"Loaded workspace name was adjusted: '{desired_name}' → '{name}'."
+                if isinstance(rename_reason, str) and rename_reason:
+                    msg += f"\nReason: {rename_reason}"
+                QMessageBox.information(self, "Workspace renamed", msg)
+
             # Populate system params
             sys_params = new_tab.sys_params
             params = data.get('system_params', {})
+            eng = params.get('engine')
+            if isinstance(eng, str):
+                cb = sys_params.engine_combo
+                idx_eng = cb.findText(eng)
+                if idx_eng >= 0:
+                    cb.setCurrentIndex(idx_eng)
             ft = params.get('field_type')
             if isinstance(ft, str):
                 cb = sys_params.field_type
@@ -304,7 +332,14 @@ class MainWindow(QMainWindow):
         tab = WorkspaceTab()
         # Apply saved layout to newly created tab
         self._apply_saved_layout_to_tab(tab)
-        self.tabs.addTab(tab, f"Workspace {self.tabs.count() + 1}")
+        # Add and switch to the new workspace tab
+        new_index = self.tabs.addTab(tab, f"Workspace {self.tabs.count() + 1}")
+        self.tabs.setCurrentIndex(new_index)
+        # Re-establish context menu in case the tab bar was created late
+        try:
+            self._setup_tab_context_menu()
+        except Exception:
+            pass
         self._update_empty_placeholder()
     
     def close_tab(self, index):
@@ -381,7 +416,43 @@ class MainWindow(QMainWindow):
                 self.tabs.setTabText(index, new_name)
             else:
                 QMessageBox.warning(self, "Invalid Name", validation_result)
-    
+
+    def _on_tabbar_context_menu(self, pos):
+        """Show context menu for a tab (rename/close) at right-click position."""
+        try:
+            bar = self.tabs.tabBar()
+            if bar is None:
+                return
+            index = bar.tabAt(pos)
+            if index < 0:
+                return
+            menu = QMenu(self)
+            act_rename = menu.addAction("Rename")
+            act_close = menu.addAction("Close")
+            chosen = menu.exec(bar.mapToGlobal(pos))
+            if chosen == act_rename:
+                self.rename_tab(index)
+            elif chosen == act_close:
+                self.close_tab(index)
+        except Exception:
+            pass
+
+    def _setup_tab_context_menu(self):
+        """Ensure the tab bar has a custom context menu connected (idempotent)."""
+        try:
+            bar = self.tabs.tabBar()
+            if bar is None:
+                return
+            bar.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+            try:
+                # Avoid duplicate connections if already connected
+                bar.customContextMenuRequested.disconnect()
+            except Exception:
+                pass
+            bar.customContextMenuRequested.connect(self._on_tabbar_context_menu)
+        except Exception:
+            pass
+
     def validate_workspace_name(self, name, exclude_index=None):
         """
         Validate workspace name according to rules.
