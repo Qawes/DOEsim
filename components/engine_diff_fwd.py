@@ -7,12 +7,12 @@ from pathlib import Path
 from PIL import Image
 from datetime import datetime
 import time
-from widgets.helpers import slugify as _slugify, fmt_fixed as _fmt2, Element
+from components.helpers import slugify as _slugify, fmt_fixed as _fmt2, Element
 
 # Preferences
 try:
-    from widgets.preferences_window import getpref
-    from widgets.preferences_window import (
+    from components.preferences_window import getpref
+    from components.preferences_window import (
         SET_RETAIN_WORKING_FILES,
         SET_AUTO_GENERATE_GIF,
     )

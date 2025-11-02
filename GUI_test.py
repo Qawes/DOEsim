@@ -44,7 +44,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt
 
 # Import shared helpers
-from widgets.helpers import (
+from components.helpers import (
     wait_until,
     find_row_by_name,
     set_name,
@@ -60,7 +60,7 @@ from widgets.helpers import (
 )
 
 from main_window import MainWindow, WorkspaceTab
-from widgets.system_parameters_widget import (
+from components.system_parameters import (
     DEFAULT_WAVELENGTH_NM,
     DEFAULT_EXTENSION_X_MM,
     DEFAULT_EXTENSION_Y_MM,
@@ -75,6 +75,8 @@ class GUITestCase(unittest.TestCase):
     window: Optional[MainWindow] = None
     _orig_engine: Optional[object] = None
     _has_failures: bool = False
+    # Keep originals for all engines we patch
+    _orig_engines: dict[str, object] = {}
 
     @classmethod
     def setUpClass(cls):
@@ -89,20 +91,49 @@ class GUITestCase(unittest.TestCase):
         cls.window.show()
         wait_until(lambda: True, 200)
         # Speed up tests by monkey-patching the engine calculation to a fast stub
-        import engine
         import numpy as np
-        cls._orig_engine = engine.calculate_screen_images
         def _fast_calc_stub(**kwargs):
             return np.zeros((64, 64, 3), dtype=np.uint8)
-        engine.calculate_screen_images = _fast_calc_stub
+        # Patch all supported engines
+        try:
+            import components.engine_diff_fwd as _edf
+            cls._orig_engines['diff_fwd'] = _edf.calculate_screen_images
+            _edf.calculate_screen_images = _fast_calc_stub  # type: ignore[assignment]
+        except Exception:
+            pass
+        try:
+            import components.engine_diff_rev as _edr
+            cls._orig_engines['diff_rev'] = _edr.calculate_screen_images
+            _edr.calculate_screen_images = _fast_calc_stub  # type: ignore[assignment]
+        except Exception:
+            pass
+        try:
+            import components.engine_bmp_rev as _ebr
+            cls._orig_engines['bmp_rev'] = _ebr.calculate_screen_images
+            _ebr.calculate_screen_images = _fast_calc_stub  # type: ignore[assignment]
+        except Exception:
+            pass
         print("\n")  # Newline before test logs
 
     @classmethod
     def tearDownClass(cls):
+        # Restore patched engines
         try:
-            import engine
-            if cls._orig_engine is not None:
-                engine.calculate_screen_images = cls._orig_engine  # type: ignore[assignment]
+            if 'diff_fwd' in cls._orig_engines:
+                import components.engine_diff_fwd as _edf
+                _edf.calculate_screen_images = cls._orig_engines['diff_fwd']  # type: ignore[assignment]
+        except Exception:
+            pass
+        try:
+            if 'diff_rev' in cls._orig_engines:
+                import components.engine_diff_rev as _edr
+                _edr.calculate_screen_images = cls._orig_engines['diff_rev']  # type: ignore[assignment]
+        except Exception:
+            pass
+        try:
+            if 'bmp_rev' in cls._orig_engines:
+                import components.engine_bmp_rev as _ebr
+                _ebr.calculate_screen_images = cls._orig_engines['bmp_rev']  # type: ignore[assignment]
         except Exception:
             pass
         if not cls._has_failures and cls.window is not None:
@@ -340,6 +371,8 @@ class GUITestCase(unittest.TestCase):
         self.assertIsInstance(dist_cell, QWidget)
         dist_spins = cast(QWidget, dist_cell).findChildren(QDoubleSpinBox)
         self.assertGreaterEqual(len(dist_spins), 2)
+        # Ensure ordering [From, To]
+        dist_spins = sorted(dist_spins, key=lambda s: s.geometry().x())
         self.assertAlmostEqual(dist_spins[0].value(), 1.0, places=3)
         self.assertAlmostEqual(dist_spins[1].value(), 100.0, places=3)
 

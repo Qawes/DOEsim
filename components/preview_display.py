@@ -6,8 +6,7 @@ import os
 from pathlib import Path
 import glob
 import numpy as np
-import engine
-from widgets.helpers import slugify as _slugify, fmt_fixed as _fmt2
+from components.helpers import slugify as _slugify, fmt_fixed as _fmt2
 
 class ImageContainer(QWidget):
     def __init__(self, title, parent=None):
@@ -188,6 +187,28 @@ class ImageContainer(QWidget):
         self._progress_initial_pngs = 0
         self._progress_dir = None
 
+    def _get_engine_module(self):
+        """Return the engine module matching the selected engine in sys params."""
+        try:
+            tab = self._find_workspace_tab()
+            sys_params = getattr(tab, 'sys_params', None)
+            eng = sys_params.engine_combo.currentText() if sys_params else "Diffractsim Forward"
+        except Exception:
+            eng = "Diffractsim Forward"
+        try:
+            if eng == "Diffractsim Reverse":
+                from components import engine_diff_rev as _engine
+                return _engine
+            if eng == "Bitmap Reverse":
+                from components import engine_bmp_rev as _engine
+                return _engine
+            # Default
+            from components import engine_diff_fwd as _engine
+            return _engine
+        except Exception:
+            from components import engine_diff_fwd as _engine
+            return _engine
+
     def _fetch_image(self):
         # Gather context from workspace
         tab = self._find_workspace_tab()
@@ -202,7 +223,7 @@ class ImageContainer(QWidget):
         else:
             # Fallback defaults
             try:
-                from widgets.system_parameters_widget import (
+                from components.system_parameters import (
                     DEFAULT_WAVELENGTH_NM,
                     DEFAULT_EXTENSION_X_MM,
                     DEFAULT_EXTENSION_Y_MM,
@@ -225,7 +246,8 @@ class ImageContainer(QWidget):
             side = "aperture"
         elif self._is_screen_panel():
             side = "screen"
-        arr = engine.calculate_screen_images(
+        engine_mod = self._get_engine_module()
+        arr = engine_mod.calculate_screen_images(
             FieldType=field_type,
             Wavelength=wavelength,
             ExtentX=extent_x,
@@ -349,11 +371,19 @@ class ImageContainer(QWidget):
         # Show current item
         cur = self._items[self._current_index]
         name = getattr(cur, 'name', '(unnamed)')
-        self.info_label.setText(f"{name}  ({self._current_index+1}/{count})")
         if self._is_aperture_panel():
+            # Display selected bitmap filename (no path/extension) per spec
+            ap = getattr(cur, 'aperture_path', '') or ''
+            base = ''
+            try:
+                base = os.path.splitext(os.path.basename(ap))[0]
+            except Exception:
+                base = ''
+            self.info_label.setText(base)
             self._show_aperture_image(cur)
             self.screen_date_label.setText("")
         else:
+            self.info_label.setText(f"{name}  ({self._current_index+1}/{count})")
             self._show_latest_screen_image_for_item(cur)
             # Update date label for screen panel
             self._update_screen_date_label()

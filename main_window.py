@@ -1,18 +1,18 @@
 from PyQt6.QtWidgets import QMainWindow, QTabWidget, QSplitter, QVBoxLayout, QMessageBox, QMenuBar, QMenu, QWidget, QInputDialog, QLineEdit, QFileDialog, QLabel, QStackedWidget
 from PyQt6.QtCore import Qt, QSettings, QUrl, QTimer
 from PyQt6.QtGui import QIcon, QDesktopServices
-from widgets.system_parameters_widget import SystemParametersWidget
-from widgets.physical_setup_visualizer import PhysicalSetupVisualizer
-from widgets.image_container import ImageContainer
-from widgets.preferences_window import PreferencesWindow, getpref
-from widgets.preferences_window import (
+from components.system_parameters import SystemParametersWidget
+from components.element_table import PhysicalSetupVisualizer
+from components.preview_display import ImageContainer
+from components.preferences_window import PreferencesWindow, getpref
+from components.preferences_window import (
     SET_DEFAULT_ELEMENT_OFFSET_MM,
     SET_CONFIRM_ON_SAVE,
     SET_ASK_BEFORE_CLOSING,
     SET_AUTO_OPEN_NEW_WORKSPACE,
     SET_OPEN_TAB_ON_STARTUP,
 )
-from widgets.helpers import validate_name_against, suggest_unique_name
+from components.helpers import validate_name_against, suggest_unique_name
 
 # ---------- Default UI layout (edit these to change the initial appearance) ----------
 DEFAULT_WINDOW_GEOMETRY = (350, 100, 1200, 800)  # x, y, width, height
@@ -233,9 +233,9 @@ class MainWindow(QMainWindow):
         try:
             import json
             import os
-            from widgets.helpers import Element
+            from components.helpers import Element
             # Import reverse-mode constants to recognize types if present
-            from widgets.physical_setup_visualizer import NEW_TYPE_APERTURE_RESULT, NEW_TYPE_TARGET_INTENSITY
+            from components.element_table import NEW_TYPE_APERTURE_RESULT, NEW_TYPE_TARGET_INTENSITY
 
             # Pick file
             default_dir = os.path.join(os.getcwd(), 'workspaces')
@@ -506,7 +506,7 @@ class MainWindow(QMainWindow):
 
     def _apply_default_distance(self, val: float):
         try:
-            import widgets.physical_setup_visualizer as psv
+            import components.element_table as psv
             psv.GLOBAL_DEFAULT_DISTANCE_MM = float(val)
         except Exception:
             pass

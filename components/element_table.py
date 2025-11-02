@@ -2,8 +2,8 @@ from PyQt6.QtWidgets import QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QWidg
 from PyQt6.QtCore import Qt, QSettings, QEvent, QTimer, QRect
 from PyQt6.QtGui import QCursor
 from typing import Optional
-from widgets.preferences_window import getpref
-from widgets.preferences_window import (
+from components.preferences_window import getpref
+from components.preferences_window import (
     SET_ENABLE_SCROLLWHEEL,
     SET_SELECT_ALL_ON_FOCUS,
     SET_USE_RELATIVE_PATHS,
@@ -11,7 +11,7 @@ from widgets.preferences_window import (
     SET_WARN_BEFORE_DELETE,
     SET_ERR_MESS_DUR,
 )
-from widgets.helpers import (
+from components.helpers import (
     is_valid_name,
     is_default_generated_element_name,
     generate_unique_default_name,
@@ -23,8 +23,8 @@ from widgets.helpers import (
     DEFAULT_ALLOWED_NAME_PATTERN,
     Element as Element,
 )
-from widgets.helpers import validate_name_against, filter_to_accepted_chars
-from widgets.helpers import extract_default_suffix
+from components.helpers import validate_name_against, filter_to_accepted_chars
+from components.helpers import extract_default_suffix
 
 GLOBAL_MINIMUM_DISTANCE_MM = 0
 GLOBAL_MAXIMUM_DISTANCE_MM = 100000.0
@@ -712,7 +712,7 @@ class PhysicalSetupVisualizer(QWidget):
         self._notify_image_containers_changed()
 
     def _on_screen_steps_edited(self, node, steps):
-        node.steps = max(2, int(steps))
+        node.steps = max(1, int(steps))
         self._notify_image_containers_changed()
 
     def _browse_aperture(self, node, path_edit):
@@ -815,11 +815,11 @@ class PhysicalSetupVisualizer(QWidget):
             pass
 
     def export_elements_for_engine(self):
-        import engine
         elements = []
         node = self.head.next  # skip light source
         while node:
             params = {}
+            # Keep name in params as non-critical metadata (engines rely on Element.name)
             params["name"] = node.name
             if node.type == "Aperture":
                 if node.aperture_path:
@@ -833,7 +833,7 @@ class PhysicalSetupVisualizer(QWidget):
                 params["is_range"] = bool(node.is_range)
                 params["range_end_mm"] = float(node.range_end if node.range_end is not None else node.distance)
                 params["steps"] = int(node.steps if node.steps is not None else 10)
-            elements.append(engine.Element(distance=node.distance, element_type=(node.type or "").lower(), params=params, name=node.name))
+            elements.append(Element(distance=node.distance, element_type=node.element_type, params=params, name=node.name))
             node = node.next
         return elements
 
