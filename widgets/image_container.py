@@ -1,6 +1,6 @@
 from PyQt6.QtWidgets import QVBoxLayout, QLabel, QPushButton, QSizePolicy, QWidget, QHBoxLayout
-from PyQt6.QtGui import QPixmap, QImage, QMovie
-from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QPixmap, QImage, QMovie, QImageReader
+from PyQt6.QtCore import Qt, QSize
 import threading
 import os
 from pathlib import Path
@@ -14,6 +14,7 @@ class ImageContainer(QWidget):
         self.title = title  # e.g., "Aperture image" or "Screen image"
         self._pixmap = None
         self._movie = None  # for GIFs
+        self._movie_src_size = None  # natural GIF frame size
         self._solve_in_progress = False
         self._show_saved_after_solve = False
         self._items = []  # list of nodes relevant to this panel
@@ -346,15 +347,46 @@ class ImageContainer(QWidget):
         except Exception:
             pass
         self._movie = None
+        self._movie_src_size = None
+
+    def _scaled_movie_size(self) -> QSize | None:
+        try:
+            if self._movie_src_size is None:
+                return None
+            sw = max(1, int(self._movie_src_size.width()))
+            sh = max(1, int(self._movie_src_size.height()))
+            lw = max(1, int(self.image_label.width()))
+            lh = max(1, int(self.image_label.height()))
+            scale = min(lw / sw, lh / sh)
+            tw = max(1, int(sw * scale))
+            th = max(1, int(sh * scale))
+            return QSize(tw, th)
+        except Exception:
+            return None
 
     def _show_gif(self, gif_path: Path):
         self._clear_movie()
         try:
             mv = QMovie(str(gif_path))
             self._movie = mv
-            # Ensure scaling on current size
+            # Determine natural GIF size without loading entire movie
             try:
-                mv.setScaledSize(self.image_label.size())
+                rdr = QImageReader(str(gif_path))
+                nat = rdr.size()
+            except Exception:
+                nat = QSize()
+            if (not nat.isValid()) or nat.isEmpty():
+                try:
+                    mv.jumpToFrame(0)
+                    nat = mv.frameRect().size()
+                except Exception:
+                    nat = QSize()
+            self._movie_src_size = nat if (nat.isValid() and not nat.isEmpty()) else None
+            # Scale to fit label while keeping aspect ratio
+            try:
+                target = self._scaled_movie_size()
+                if target is not None:
+                    mv.setScaledSize(target)
             except Exception:
                 pass
             self.image_label.setMovie(mv)
@@ -448,7 +480,9 @@ class ImageContainer(QWidget):
         # Keep GIF scaled along with label
         try:
             if self._movie is not None:
-                self._movie.setScaledSize(self.image_label.size())
+                target = self._scaled_movie_size()
+                if target is not None:
+                    self._movie.setScaledSize(target)
         except Exception:
             pass
         self.update_image()
@@ -458,7 +492,9 @@ class ImageContainer(QWidget):
         if self._movie is not None:
             # Movie is already set on the label; ensure scaled size
             try:
-                self._movie.setScaledSize(self.image_label.size())
+                target = self._scaled_movie_size()
+                if target is not None:
+                    self._movie.setScaledSize(target)
             except Exception:
                 pass
             return

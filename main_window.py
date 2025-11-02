@@ -1,6 +1,6 @@
 from PyQt6.QtWidgets import QMainWindow, QTabWidget, QSplitter, QVBoxLayout, QMessageBox, QMenuBar, QMenu, QWidget, QInputDialog, QLineEdit, QFileDialog, QLabel, QStackedWidget
-from PyQt6.QtCore import Qt, QSettings
-from PyQt6.QtGui import QIcon
+from PyQt6.QtCore import Qt, QSettings, QUrl
+from PyQt6.QtGui import QIcon, QDesktopServices
 from widgets.system_parameters_widget import SystemParametersWidget
 from widgets.physical_setup_visualizer import PhysicalSetupVisualizer
 from widgets.image_container import ImageContainer
@@ -84,6 +84,9 @@ class MainWindow(QMainWindow):
             "<b><a href='new'>Create</a></b> a new Workspace,<br/>or<br/>"
             "<b><a href='load'>Load</a></b> an existing one."
             "</div>"
+            "<div style='font-size:10pt; color:#777777; margin-top:20px; font-style:italic;'>"
+            "Read the <b><a href='help'>documentation</a></b> for getting started." 
+            "</div>"
         )
         self._placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._placeholder.setWordWrap(True)
@@ -106,6 +109,8 @@ class MainWindow(QMainWindow):
         # Conditionally open an empty workspace tab on startup
         if bool(getpref(SET_OPEN_TAB_ON_STARTUP)):
             self.add_new_tab()
+        # elif bool(getpref(SET_AUTO_OPEN_NEW_WORKSPACE)):
+        #     self.add_new_tab()
         # Update placeholder visibility either way
         self._update_empty_placeholder()
 
@@ -122,7 +127,7 @@ class MainWindow(QMainWindow):
         edit_menu.addAction("Preferences", self.open_preferences_tab)
         help_menu = QMenu("Help", self)
         menubar.addMenu(help_menu)
-        help_menu.addAction("Help", self.not_implemented)
+        help_menu.addAction("Help", self.open_help)
         help_menu.addAction("About", self.show_about)
 
     def save_workspace(self):
@@ -564,9 +569,14 @@ class MainWindow(QMainWindow):
             self.add_new_tab()
         elif href == 'load':
             self.load_workspace()
+        elif href == 'help':
+                self.open_help()
 
     def not_implemented(self):
         QMessageBox.information(self, "Not implemented", "This feature is not implemented in the proof of concept.")
 
     def show_about(self):
         QMessageBox.about(self, "About", "Diffractsim GUI Proof of Concept\n\nDeveloped using PyQt6.")
+
+    def open_help(self):
+        QDesktopServices.openUrl(QUrl("https://github.com/Qawes/DOEsim"))

@@ -7,3 +7,10 @@ if __name__ == "__main__":
     window = MainWindow()
     window.show()
     sys.exit(app.exec()) 
+
+'''
+Compile into exe:
+
+pyinstaller --windowed --onedir --clean --icon fzp_icon.ico main.py
+
+'''

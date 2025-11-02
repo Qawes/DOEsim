@@ -1,5 +1,6 @@
-from PyQt6.QtWidgets import QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QWidget, QTableWidget, QTableWidgetItem, QComboBox, QDoubleSpinBox, QHeaderView, QFileDialog, QLineEdit, QMessageBox, QCheckBox, QSpinBox, QApplication
-from PyQt6.QtCore import Qt, QSettings, QEvent, QTimer
+from PyQt6.QtWidgets import QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QWidget, QTableWidget, QTableWidgetItem, QComboBox, QDoubleSpinBox, QHeaderView, QFileDialog, QLineEdit, QMessageBox, QCheckBox, QSpinBox, QApplication, QToolTip
+from PyQt6.QtCore import Qt, QSettings, QEvent, QTimer, QRect
+from PyQt6.QtGui import QCursor
 from typing import Optional
 from widgets.preferences_window import getpref
 from widgets.preferences_window import (
@@ -8,13 +9,15 @@ from widgets.preferences_window import (
     SET_USE_RELATIVE_PATHS,
     SET_RENAME_ON_TYPE_CHANGE,
     SET_WARN_BEFORE_DELETE,
+    SET_ERR_MESS_DUR,
 )
 
-GLOBAL_MINIMUM_DISTANCE_MM = 0.01
+GLOBAL_MINIMUM_DISTANCE_MM = 0
 GLOBAL_MAXIMUM_DISTANCE_MM = 100000.0
 GLOBAL_DEFAULT_DISTANCE_MM = 10.0
 LENS_DEFAULT_FOCUS_MM = 1000.0
 GLOBAL_DISTANCE_TEXT = "Placement"
+GLOBAL_STEPS_DEFAULT = 1
 
 class ElementNode:
     def __init__(self, name, elem_type, distance, focal_length=None, aperture_path=None, is_range=None, range_end=None, steps=None):
@@ -26,7 +29,7 @@ class ElementNode:
         # Screen-specific
         self.is_range = is_range  # boolean indicating if it's a range of screens
         self.range_end = range_end if range_end is not None else distance + GLOBAL_DEFAULT_DISTANCE_MM
-        self.steps = int(steps) if steps is not None else 10
+        self.steps = int(steps) if steps is not None else GLOBAL_STEPS_DEFAULT
         self.next: Optional[ElementNode] = None
 
 class PhysicalSetupVisualizer(QWidget):
@@ -181,7 +184,7 @@ class PhysicalSetupVisualizer(QWidget):
             else:
                 name_edit = QLineEdit(node.name)
                 name_edit.installEventFilter(self)
-                name_edit.editingFinished.connect(lambda n=name_edit, nd=node: self._on_name_edited(nd, n.text()))
+                name_edit.editingFinished.connect(lambda n=name_edit, nd=node: self._on_name_edited(nd, n))
                 self.table.setCellWidget(idx, 0, name_edit)
             # Type
             if node.type == "LightSource":
@@ -197,7 +200,7 @@ class PhysicalSetupVisualizer(QWidget):
                 self.table.setCellWidget(idx, 1, combo)
             # Distance
             if node.type == "LightSource":
-                dist_item = QTableWidgetItem("0 mm")
+                dist_item = QTableWidgetItem("-∞")  # Unicode infinity symbol
                 dist_item.setFlags(Qt.ItemFlag.ItemIsEnabled)
                 self.table.setItem(idx, 2, dist_item)
             else:
@@ -266,6 +269,29 @@ class PhysicalSetupVisualizer(QWidget):
         # Notify image containers that the element list or attributes changed
         self._notify_image_containers_changed()
 
+    def _show_temp_tooltip(self, widget: QWidget, text: str):
+        try:
+            dur = int(getpref(SET_ERR_MESS_DUR, 3000))
+        except Exception:
+            dur = 3000
+        # Prefer showing near the provided widget; fall back to focus widget or cursor
+        try:
+            pos = widget.mapToGlobal(widget.rect().bottomLeft())
+            QToolTip.showText(pos, text, widget, widget.rect(), dur)
+            return
+        except Exception:
+            pass
+        try:
+            fw = QApplication.focusWidget()
+            if fw is not None:
+                pos = fw.mapToGlobal(fw.rect().center())
+                QToolTip.showText(pos, text, fw, fw.rect(), dur)
+            else:
+                pos = QCursor.pos()
+                QToolTip.showText(pos, text, None, QRect(), dur)
+        except Exception:
+            pass
+
     def add_element(self, elem_type):
         import os
         from PIL import Image
@@ -285,14 +311,14 @@ class PhysicalSetupVisualizer(QWidget):
             node = node.next
         last_distance = node.distance
         if elem_type == "Aperture":
-            name = f"Aperture {self._count_type('Aperture')+1}"
+            name = self._generate_unique_default_name("Aperture")
             stored_path = self._to_pref_path(white_path)
             new_node = ElementNode(name, "Aperture", last_distance + GLOBAL_DEFAULT_DISTANCE_MM, aperture_path=stored_path)
         elif elem_type == "Lens":
-            name = f"Lens {self._count_type('Lens')+1}"
+            name = self._generate_unique_default_name("Lens")
             new_node = ElementNode(name, "Lens", last_distance + GLOBAL_DEFAULT_DISTANCE_MM, focal_length=LENS_DEFAULT_FOCUS_MM)
         else:  # Screen
-            name = f"Screen {self._count_type('Screen')+1}"
+            name = self._generate_unique_default_name("Screen")
             new_node = ElementNode(name, "Screen", last_distance + GLOBAL_DEFAULT_DISTANCE_MM, is_range=False, range_end=last_distance + GLOBAL_DEFAULT_DISTANCE_MM, steps=10)
         node.next = new_node
         self.refresh_table()
@@ -305,6 +331,16 @@ class PhysicalSetupVisualizer(QWidget):
                 count += 1
             node = node.next
         return count
+
+    def _generate_unique_default_name(self, base_type: str) -> str:
+        """Return the first available default name like 'Aperture 1', 'Lens 2', etc.,
+        that does not collide with any existing element name (across all types)."""
+        i = 1
+        while True:
+            candidate = f"{base_type} {i}"
+            if not self._name_exists(candidate):
+                return candidate
+            i += 1
 
     def _is_default_generated_name(self, node: 'ElementNode') -> bool:
         import re as _re
@@ -319,12 +355,29 @@ class PhysicalSetupVisualizer(QWidget):
             cur = cur.next
         return False
 
-    def _on_name_edited(self, node, new_name):
+    def _on_name_edited(self, node, name_edit):
+        """Handle manual name edits, enforcing uniqueness across all elements.
+        If a duplicate is entered, revert to the previous name."""
+        try:
+            new_name = str(name_edit.text()).strip()
+        except Exception:
+            new_name = ""
+        # Reject empty names or duplicates
+        if not new_name or self._name_exists(new_name, exclude=node):
+            try:
+                name_edit.blockSignals(True)
+                name_edit.setText(node.name)
+                name_edit.blockSignals(False)
+            except Exception:
+                pass
+            # Non-intrusive feedback
+            self._show_temp_tooltip(name_edit, "Element names must be unique.")
+            return
+        # Accept unique name
         node.name = new_name
         self._notify_image_containers_changed()
 
     def _on_type_changed(self, node, new_type):
-        # TODO: if the setting is enabled, rename any default element names eg: "Aperture 2" to "Lens 2" when changing type. You should just replace the Lens string to Aperture. BUT if it would result in a non-unique name, abort the renaming! renaming element to a non-unique name should ALWAYS be run against the unique name check, and aborted (silently) if it would result in a non-unique name.
         old_type = node.type
         node.type = new_type
         
@@ -339,6 +392,20 @@ class PhysicalSetupVisualizer(QWidget):
                     # Abort renaming if it would not be unique
                     if not self._name_exists(desired, exclude=node):
                         node.name = desired
+                    else:
+                        # Show non-intrusive error if rename aborted
+                        try:
+                            row = self._find_row_for_node(node)
+                            if row is not None:
+                                w = self.table.cellWidget(row, 0)
+                                if isinstance(w, QLineEdit):
+                                    self._show_temp_tooltip(w, "Cannot rename: name already exists.")
+                                else:
+                                    self._show_temp_tooltip(self, "Cannot rename: name already exists.")
+                            else:
+                                self._show_temp_tooltip(self, "Cannot rename: name already exists.")
+                        except Exception:
+                            pass
         except Exception:
             pass
         

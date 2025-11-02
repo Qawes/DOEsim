@@ -1,4 +1,4 @@
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QGroupBox, QFormLayout, QCheckBox, QDoubleSpinBox
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QGroupBox, QFormLayout, QCheckBox, QDoubleSpinBox, QSpinBox
 from PyQt6.QtCore import Qt, QSettings
 from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import QPushButton, QMessageBox
@@ -13,8 +13,10 @@ SET_WARN_BEFORE_DELETE = 'warn_before_delete'
 SET_USE_RELATIVE_PATHS = 'use_relative_paths'
 SET_DEFAULT_ELEMENT_OFFSET_MM = 'default_element_offset_mm'
 SET_OPEN_TAB_ON_STARTUP = 'open_tab_on_startup'
-SET_RETAIN_WORKING_FILES = 'retain_working_files' # This setting controls if the generated screen files are kept in the solutions folder. if false, they are deleted just after the solve button is clicked in the same workspace. if it is true, every generated image is saved inside simulation_results/<workspace_name>/<current time in unix>/. make sure this is followed properly in engine.py
-SET_AUTO_GENERATE_GIF = 'auto_generate_gif' # this setting controls whether a gif is generated from each screen range (only ranges, single screens are unaffected). 
+SET_RETAIN_WORKING_FILES = 'retain_working_files'
+SET_AUTO_GENERATE_GIF = 'auto_generate_gif'
+SET_COMMA_AS_DECIMAL = 'comma_as_decimal' # this setting controls whether a comma is used as decimal separator in input fields.
+SET_ERR_MESS_DUR = 'error_message_duration_ms'
 
 # Module-level defaults to mirror main_window preferences
 _DEFAULT_PREFS = {
@@ -30,6 +32,7 @@ _DEFAULT_PREFS = {
     SET_OPEN_TAB_ON_STARTUP: False,
     SET_RETAIN_WORKING_FILES: False,
     SET_AUTO_GENERATE_GIF: True,
+    SET_ERR_MESS_DUR: 3000,
 }
 
 def _coerce_type(val, typ):
@@ -80,11 +83,14 @@ class PreferencesTab(QWidget):
         grp_workspace = QGroupBox("Workspace behavior", self)
         flw = QFormLayout(grp_workspace)
         self.chk_auto_open = QCheckBox("Auto open new workspace when none is present", grp_workspace)
-        self.chk_ask_before_close = QCheckBox("Ask before closing workspaces", grp_workspace)
+        self.chk_auto_open.setToolTip("If enabled, a new workspace will be created automatically whenever the last workspace is closed.")
         self.chk_open_on_startup = QCheckBox("Open an empty workspace on startup", grp_workspace)
+        self.chk_open_on_startup.setToolTip("If enabled, a new workspace will be created automatically when the application starts.")
+        self.chk_ask_before_close = QCheckBox("Ask before closing workspaces", grp_workspace)
+        self.chk_ask_before_close.setToolTip("Prompt for confirmation before closing a workspace tab. For the last tab, the prompt adapts based on the auto-open preference.")
         flw.addRow(self.chk_auto_open)
-        flw.addRow(self.chk_ask_before_close)
         flw.addRow(self.chk_open_on_startup)
+        flw.addRow(self.chk_ask_before_close)
         grp_workspace.setLayout(flw)
         root.addWidget(grp_workspace)
 
@@ -92,23 +98,37 @@ class PreferencesTab(QWidget):
         grp_ui = QGroupBox("UI interactions", self)
         flu = QFormLayout(grp_ui)
         self.chk_confirm_save = QCheckBox("Display confirmation on saving workspaces", grp_ui)
+        self.chk_confirm_save.setToolTip("Show a confirmation message after successfully saving a workspace.")
         self.chk_enable_scrollwheel = QCheckBox("Enable scrollwheel in elements table to modify dropdowns and spinboxes", grp_ui)
+        self.chk_enable_scrollwheel.setToolTip("Allow using the mouse wheel to change values in dropdowns and spin boxes in the elements table.")
         self.chk_select_all_on_focus = QCheckBox("Select all text when clicking into input fields", grp_ui)
+        self.chk_select_all_on_focus.setToolTip("Automatically select all text when an input field gains focus.")
         self.chk_rename_on_type = QCheckBox("Change element name when changing its type (only if default-generated)", grp_ui)
+        self.chk_rename_on_type.setToolTip("If enabled, default-generated element names will update when you change the element type.")
         self.chk_warn_before_delete = QCheckBox("Warn before deleting elements", grp_ui)
+        self.chk_warn_before_delete.setToolTip("Ask for confirmation before deleting elements from the setup.")
+        # Error message duration spinbox
+        self.spin_err_dur = QSpinBox(grp_ui)
+        self.spin_err_dur.setRange(500, 20000)
+        self.spin_err_dur.setSingleStep(250)
+        self.spin_err_dur.setSuffix(" ms")
+        self.spin_err_dur.setToolTip("Duration for temporary error messages (e.g., aborted rename).")
         flu.addRow(self.chk_confirm_save)
         flu.addRow(self.chk_enable_scrollwheel)
         flu.addRow(self.chk_select_all_on_focus)
         flu.addRow(self.chk_rename_on_type)
         flu.addRow(self.chk_warn_before_delete)
+        flu.addRow("Error message display time", self.spin_err_dur)
         grp_ui.setLayout(flu)
         root.addWidget(grp_ui)
 
         # Output options
         grp_output = QGroupBox("Output", self)
         flo = QFormLayout(grp_output)
-        self.chk_retain_files = QCheckBox("Retain generated screen files (save under timestamped subfolders)", grp_output)
+        self.chk_retain_files = QCheckBox("Retain generated screen files", grp_output)
+        self.chk_retain_files.setToolTip("Keep generated screen images and metadata in timestamped subfolders instead of cleaning them up.")
         self.chk_auto_gif = QCheckBox("Auto-generate GIF for screen ranges", grp_output)
+        self.chk_auto_gif.setToolTip("Automatically create an animated GIF for screen distance ranges after solving.")
         flo.addRow(self.chk_retain_files)
         flo.addRow(self.chk_auto_gif)
         grp_output.setLayout(flo)
@@ -118,10 +138,12 @@ class PreferencesTab(QWidget):
         grp_paths = QGroupBox("Paths and defaults", self)
         flp = QFormLayout(grp_paths)
         self.chk_use_relative = QCheckBox("Use relative paths", grp_paths)
+        self.chk_use_relative.setToolTip("Store aperture file paths relative to the workspace or project folder when possible.")
         self.spin_default_offset = QDoubleSpinBox()
         self.spin_default_offset.setRange(0.0, 100000.0)
         self.spin_default_offset.setDecimals(2)
         self.spin_default_offset.setSuffix(" mm")
+        self.spin_default_offset.setToolTip("Distance (in millimeters) to insert between newly added elements by default.")
         flp.addRow(self.chk_use_relative)
         flp.addRow("Default distance between elements when adding to the table", self.spin_default_offset)
         grp_paths.setLayout(flp)
@@ -160,6 +182,8 @@ class PreferencesTab(QWidget):
         self.chk_use_relative.toggled.connect(self._notify_use_relative_paths_changed)
         # Apply default distance immediately as well
         self.spin_default_offset.valueChanged.connect(lambda v: (setpref(SET_DEFAULT_ELEMENT_OFFSET_MM, float(v)), self._mw._apply_default_distance(float(v))))
+        # Error message duration
+        self.spin_err_dur.valueChanged.connect(lambda v: setpref(SET_ERR_MESS_DUR, int(v)))
         # Reset button
         self.btn_reset_settings.clicked.connect(self._reset_all_settings)
 
@@ -200,6 +224,8 @@ class PreferencesTab(QWidget):
         if hasattr(self, 'chk_auto_gif'):
             self.chk_auto_gif.setChecked(bool(getpref(SET_AUTO_GENERATE_GIF)))
         self.spin_default_offset.setValue(float(getpref(SET_DEFAULT_ELEMENT_OFFSET_MM)))
+        if hasattr(self, 'spin_err_dur'):
+            self.spin_err_dur.setValue(int(getpref(SET_ERR_MESS_DUR)))
 
     def _reset_all_settings(self):
         """Delete all user-specific settings and restore defaults immediately."""

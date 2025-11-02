@@ -5,18 +5,14 @@ FEAT - add fifth column (another value)
      - for screens first value is it range or single
      - for screens second value is two numbers: length, and interval between screens
 
-MISC - resizing while calculating images hides "calculating" and shows previous image (pr text)
-     - make polychromatic selection text unavailable
-     - some numberfield should allow for zero values
-     - numberfields with a non zero minimum should jump to a whole integer from minimum value (eg. 0.01 -> 1, not 0.01 -> 1.01)
+MISC - make polychromatic selection text unavailable
+     - go over name change error tooltip
      - possibly add an option to use relative distances instead of placement - Add moving arrows to elements
-     - element name change should be in sync with the add element naming system (numbering)
      - simulation should not run when aperture with empty path is present
      - creating new tab should switch to it
      - right clicking workspace name should show contextmenu
      - manage delete button enabled state
      - underflowing spinbox limit forces element to switch places .\bug.mkv
-     - stylize welcome text
      - is screen range start adn end are equal, force step to be one
      - add tooltips for all settings!
      - gif is stretched :( dont
@@ -24,6 +20,13 @@ MISC - resizing while calculating images hides "calculating" and shows previous 
      - make solve buttons work! (find out how to do global release flag)
      - disable aperture solve btn for now
      - add path for sim_results folder
+     - localization . and , 
+     - clamp numberfield value to min/max instead of rejecting it
+     - light gray as bg
+     - apertures override each other - some finicky workaround is needed :(
+     - set lightsource distance to -inf, and make numberfield minimums zero
+     - investigate aperture rotated 180deg
+     - make macro for copying diffracsim folder, fzp_icon and aperture folder when compiling
 
 
 
