@@ -5,21 +5,15 @@ FEAT - add fifth column (another value)
      - for screens first value is it range or single
      - for screens second value is two numbers: length, and interval between screens
 
-MISC - make polychromatic selection text unavailable
-     - go over name change error tooltip
+MISC - go over name change error tooltip
      - possibly add an option to use relative distances instead of placement - Add moving arrows to elements
      - simulation should not run when aperture with empty path is present
-     - creating new tab should switch to it
-     - right clicking workspace name should show contextmenu
      - manage delete button enabled state
      - underflowing spinbox limit forces element to switch places .\bug.mkv
      - is screen range start adn end are equal, force step to be one
-     - add tooltips for all settings!
-     - gif is stretched :( dont
-     - do smtn with the screen stepping arrows
      - make solve buttons work! (find out how to do global release flag)
      - disable aperture solve btn for now
-     - add path for sim_results folder
+     - add path option for sim_results folder
      - localization . and , 
      - clamp numberfield value to min/max instead of rejecting it
      - light gray as bg
@@ -30,7 +24,8 @@ MISC - make polychromatic selection text unavailable
      - making a screen range sometimes results in invalid range end. clamp to start dist
      - add calculation progress based on number of screens
      - opening pref while soolution is done and gif playing crashes
-
+     - test for renaming things with illegal chars and bad names (duplicate, empty, short, etc.)
+     - move imports and DEFAULT to top if possible
 
 
 AI Model experience:
@@ -38,30 +33,5 @@ AI Model experience:
 - Sonnet 4.5 (paid) Limited usage, due to frequent slowdowns / loops. For every edit it goes aroud multiple times for a file, always forgetting newlines. Maybe Python language issue? Creates lots of files, tries to run cmd scripts, even if explicitly told not to.
 - GPT 5 (paid) Slow, sometimes takes really long, not too verbose with every step its doing. Usually manages to solve the query, doesnt generate infinite files. Just invisible (positive)
 
-GUI tests in order:
-- create new workspace and rename it to TESTING_TAB_NAME. Close old default workspace (Workspace 1). Check if right tab remained open, and only one
-- change field type, wavelength, extents, resolution. check whether all of them changed to their respective DEFAULT values
-- add an aperture, a lens, and a screen, then one-by-one delete them
-- add an aperture, a lens, and a screen, then delete them all at once by selecting them with their table index
-- add an aperture, rename it to fzpelem, change distance to 0.01, change image to "\♥aperatures\20250320 00_11_58 manual pattern.png"
-- add lens, rename it to gyujto, change distance to 3, change focus to 800
-- add screen, rename it to lemezkep, change distance to 0.01
-- add screen, rename to lencsekep, change distance to 1000
-- add screen, rename to kep, change distance to 1000, delete screen lencsekep
-- load Scene_1 into memory, check if all elements and system parameters match 
-- add an aperture, rename it to white, set distance to 0.01. add a lens named fokusz, distance 0.01, focal length 30. add a screen named initial distance 0.01. add a screen named logitudinal distance from 1 to 100 in 15 steps. rename workspace to Generated_1 and save (overwrite if necessary). check if exported json matches manually prepared one (Scene_2)
-- click solve button under screen
 
-
-tests:
-- workspace naming and validation (check for all delims ' ', ',', '.')
-- element table renaming sync between adding new and changing element type
-- test for screen end distance limits
-create elements A1, A2, L1, S1, S2 of types aperture, aperture, lens, screen ,screen
-change L1 type to aperture, check for names A1, A2, L1, S1, S2
-change L1 type to screen, check for names A1, A2, L1, S1, S2
-change A2 type to lens, check for names A1, L2, L1, S1, S2
-change L2 type to screen, check for names A1, L2, L1, S1, S2
-change s2 type to aperture, check for names A1, L2, L1, S1, A2
-check for types: aperture, screen, screen, screen, aperture
-set A1 name to L1, expect error message, check for names A1, L2, L1, S1, A2
+Based on the system parameter engine, different pools of elements should be visible when adding elements to the table. for diffractsim forward, the combobox items should be the already available Apertue, Lens and Screen. for diffractsim reverse, it should be Aperture Result, Lens(the one already implemented) and Target Intensity.  for bitmap reverse, it should be Aperture Result, Lens and Target Intensity.

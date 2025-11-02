@@ -23,6 +23,7 @@ from widgets.helpers import (
     DEFAULT_ALLOWED_NAME_PATTERN,
 )
 from widgets.helpers import validate_name_against, filter_to_accepted_chars
+from widgets.helpers import extract_default_suffix
 
 GLOBAL_MINIMUM_DISTANCE_MM = 0
 GLOBAL_MAXIMUM_DISTANCE_MM = 100000.0
@@ -31,6 +32,9 @@ LENS_DEFAULT_FOCUS_MM = 1000.0
 GLOBAL_DISTANCE_TEXT = "Placement"
 GLOBAL_STEPS_DEFAULT = 1
 
+NEW_TYPE_APERTURE_RESULT = "ApertureResult"
+NEW_TYPE_TARGET_INTENSITY = "TargetIntensity"
+
 class ElementNode:
     def __init__(self, name, elem_type, distance, focal_length=None, aperture_path=None, is_range=None, range_end=None, steps=None):
         self.name = name
@@ -38,7 +42,7 @@ class ElementNode:
         self.distance = distance
         self.focal_length = focal_length
         self.aperture_path = aperture_path
-        # Screen-specific
+        # Screen-specific and TargetIntensity-specific
         self.is_range = is_range  # boolean indicating if it's a range of screens
         self.range_end = range_end if range_end is not None else distance + GLOBAL_DEFAULT_DISTANCE_MM
         self.steps = int(steps) if steps is not None else GLOBAL_STEPS_DEFAULT
@@ -59,15 +63,20 @@ class PhysicalSetupVisualizer(QWidget):
             header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         layout.addWidget(self.table)
         btn_layout = QHBoxLayout()
-        self.add_aperture_btn = QPushButton("Add Aperture")
-        self.add_aperture_btn.clicked.connect(lambda: self.add_element("Aperture"))
-        btn_layout.addWidget(self.add_aperture_btn)
-        self.add_lens_btn = QPushButton("Add Lens")
-        self.add_lens_btn.clicked.connect(lambda: self.add_element("Lens"))
-        btn_layout.addWidget(self.add_lens_btn)
-        self.add_screen_btn = QPushButton("Add Screen")
-        self.add_screen_btn.clicked.connect(lambda: self.add_element("Screen"))
-        btn_layout.addWidget(self.add_screen_btn)
+        # Three generic add buttons; text and behavior depend on engine mode
+        self.add_btn_1 = QPushButton()
+        self.add_btn_1.clicked.connect(lambda: self._on_add_button(0))
+        btn_layout.addWidget(self.add_btn_1)
+        self.add_btn_2 = QPushButton()
+        self.add_btn_2.clicked.connect(lambda: self._on_add_button(1))
+        btn_layout.addWidget(self.add_btn_2)
+        self.add_btn_3 = QPushButton()
+        self.add_btn_3.clicked.connect(lambda: self._on_add_button(2))
+        btn_layout.addWidget(self.add_btn_3)
+        # Back-compat aliases for tests expecting fixed-named buttons
+        self.add_aperture_btn = self.add_btn_1
+        self.add_lens_btn = self.add_btn_2
+        self.add_screen_btn = self.add_btn_3
         self.del_btn = QPushButton("Delete selected element(s)")
         self.del_btn.setEnabled(True)  # Keep enabled; handler is a no-op when nothing valid is selected
         self.del_btn.clicked.connect(self.delete_selected_elements)
@@ -77,6 +86,13 @@ class PhysicalSetupVisualizer(QWidget):
         self.setLayout(layout)
         # Linked list head: always the light source
         self.head = ElementNode("Light Source", "LightSource", 0)
+        # Engine/type mapping state
+        self._engine_mode = "Diffractsim Forward"
+        self._type_display_list: list[str] = []
+        self._display_to_internal: dict[str, str] = {}
+        self._internal_to_display: dict[str, str] = {}
+        # Initialize mapping and buttons
+        self.set_engine_mode(self._engine_mode)
         self._restore_header_state()
         self.table.itemSelectionChanged.connect(self._update_delete_button_state)
         self.refresh_table()
@@ -185,6 +201,8 @@ class PhysicalSetupVisualizer(QWidget):
             pass
 
     def refresh_table(self):
+        # First, coerce existing element internal types to match current engine mode
+        self._apply_engine_type_coercion_once()
         self.table.setRowCount(0)
         node = self.head
         idx = 0
@@ -207,10 +225,14 @@ class PhysicalSetupVisualizer(QWidget):
                 self.table.setItem(idx, 1, type_item)
             else:
                 combo = QComboBox()
-                combo.addItems(["Aperture", "Lens", "Screen"])
-                combo.setCurrentText(node.type)
+                # Populate based on current engine mapping
+                for disp in self._type_display_list:
+                    combo.addItem(disp)
+                # Set current based on internal type -> display label mapping
+                disp_text = self._internal_to_display.get(node.type, node.type)
+                combo.setCurrentText(disp_text)
                 combo.installEventFilter(self)
-                combo.currentTextChanged.connect(lambda t, nd=node: self._on_type_changed(nd, t))
+                combo.currentTextChanged.connect(lambda disp, nd=node: self._on_display_type_changed(nd, disp))
                 self.table.setCellWidget(idx, 1, combo)
             # Distance
             if node.type == "LightSource":
@@ -277,11 +299,89 @@ class PhysicalSetupVisualizer(QWidget):
                 vlayout.addWidget(steps_spin)
                 vlayout.addStretch()
                 self.table.setCellWidget(idx, 3, value_widget)
+            elif node.type == NEW_TYPE_APERTURE_RESULT:
+                # For now, mirror Aperture UI (path selector)
+                path_widget = QWidget(self.table)
+                path_layout = QHBoxLayout(path_widget)
+                path_layout.setContentsMargins(0, 0, 0, 0)
+                path_edit = QLineEdit(self._normalize_aperture_display_path(node.aperture_path), path_widget)
+                path_edit.installEventFilter(self)
+                browse_btn = QPushButton("...", path_widget)
+                browse_btn.setFixedWidth(28)
+                browse_btn.clicked.connect(lambda _=None, nd=node, pe=path_edit: self._browse_aperture(nd, pe))
+                path_edit.editingFinished.connect(lambda nd=node, pe=path_edit: self._on_aperture_path_edited(nd, pe.text()))
+                path_layout.addWidget(path_edit)
+                path_layout.addWidget(browse_btn)
+                self.table.setCellWidget(idx, 3, path_widget)
+            elif node.type == NEW_TYPE_TARGET_INTENSITY:
+                # Target intensity may not need extra value; keep placeholder
+                value_item = QTableWidgetItem("Target intensity")
+                value_item.setFlags(Qt.ItemFlag.ItemIsEnabled)
+                self.table.setItem(idx, 3, value_item)
             node = node.next
             idx += 1
         self._update_delete_button_state()
         # Notify image containers that the element list or attributes changed
         self._notify_image_containers_changed()
+
+    def _apply_engine_type_coercion_once(self):
+        try:
+            engine = (self._engine_mode or "").strip()
+            # Determine allowed internal types and mapping for cross-engine substitutions
+            if engine == "Diffractsim Reverse":
+                to_internal = {
+                    "Aperture": NEW_TYPE_APERTURE_RESULT,
+                    "Screen": NEW_TYPE_TARGET_INTENSITY,
+                    "Lens": "Lens",
+                    NEW_TYPE_APERTURE_RESULT: NEW_TYPE_APERTURE_RESULT,
+                    NEW_TYPE_TARGET_INTENSITY: NEW_TYPE_TARGET_INTENSITY,
+                }
+            else:  # Forward and other modes default to forward set
+                to_internal = {
+                    NEW_TYPE_APERTURE_RESULT: "Aperture",
+                    NEW_TYPE_TARGET_INTENSITY: "Screen",
+                    "Aperture": "Aperture",
+                    "Lens": "Lens",
+                    "Screen": "Screen",
+                }
+            # Walk nodes and adjust types as needed
+            cur = self.head.next
+            while cur is not None:
+                desired = to_internal.get(cur.type, cur.type)
+                if desired != cur.type:
+                    old = cur.type
+                    cur.type = desired
+                    # Set defaults for new type
+                    if desired in ("Aperture", NEW_TYPE_APERTURE_RESULT):
+                        if cur.aperture_path is None:
+                            cur.aperture_path = ""
+                    elif desired == "Lens":
+                        if cur.focal_length is None:
+                            cur.focal_length = LENS_DEFAULT_FOCUS_MM
+                    elif desired in ("Screen", NEW_TYPE_TARGET_INTENSITY):
+                        if cur.is_range is None:
+                            cur.is_range = False
+                    # Auto-rename if preference and current name looks default-generated
+                    try:
+                        if bool(getpref(SET_RENAME_ON_TYPE_CHANGE)) and self._is_default_generated_name(cur):
+                            suf = extract_default_suffix(getattr(cur, 'name', ''))
+                            if suf is not None:
+                                display_name = self._internal_to_display.get(desired, desired)
+                                candidate = f"{display_name} {suf}"
+                                # Validate against other existing names excluding this node
+                                existing = []
+                                check = self.head
+                                while check is not None:
+                                    if check is not cur:
+                                        existing.append(check.name)
+                                    check = check.next
+                                if validate_name_against(candidate, existing, 1, DEFAULT_ALLOWED_NAME_PATTERN) is True:
+                                    cur.name = candidate
+                    except Exception:
+                        pass
+                cur = cur.next
+        except Exception:
+            pass
 
     def _show_temp_tooltip(self, widget: QWidget, text: str):
         try:
@@ -296,7 +396,7 @@ class PhysicalSetupVisualizer(QWidget):
         # Ensure white.png exists in ./aperatures/
         aperture_dir = os.path.join(os.getcwd(), "aperatures")
         white_path = os.path.join(aperture_dir, "white.png")
-        if elem_type == "Aperture":
+        if elem_type in ("Aperture", NEW_TYPE_APERTURE_RESULT):
             if not os.path.exists(aperture_dir):
                 os.makedirs(aperture_dir, exist_ok=True)
             if not os.path.exists(white_path):
@@ -312,9 +412,16 @@ class PhysicalSetupVisualizer(QWidget):
             name = self._generate_unique_default_name("Aperture")
             stored_path = self._to_pref_path(white_path)
             new_node = ElementNode(name, "Aperture", last_distance + GLOBAL_DEFAULT_DISTANCE_MM, aperture_path=stored_path)
+        elif elem_type == NEW_TYPE_APERTURE_RESULT:
+            name = self._generate_unique_default_name("Aperture Result")
+            stored_path = self._to_pref_path(white_path)
+            new_node = ElementNode(name, NEW_TYPE_APERTURE_RESULT, last_distance + GLOBAL_DEFAULT_DISTANCE_MM, aperture_path=stored_path)
         elif elem_type == "Lens":
             name = self._generate_unique_default_name("Lens")
             new_node = ElementNode(name, "Lens", last_distance + GLOBAL_DEFAULT_DISTANCE_MM, focal_length=LENS_DEFAULT_FOCUS_MM)
+        elif elem_type == NEW_TYPE_TARGET_INTENSITY:
+            name = self._generate_unique_default_name("Target Intensity")
+            new_node = ElementNode(name, NEW_TYPE_TARGET_INTENSITY, last_distance + GLOBAL_DEFAULT_DISTANCE_MM, is_range=False, range_end=last_distance + GLOBAL_DEFAULT_DISTANCE_MM, steps=10)
         else:  # Screen
             name = self._generate_unique_default_name("Screen")
             new_node = ElementNode(name, "Screen", last_distance + GLOBAL_DEFAULT_DISTANCE_MM, is_range=False, range_end=last_distance + GLOBAL_DEFAULT_DISTANCE_MM, steps=10)
@@ -379,15 +486,13 @@ class PhysicalSetupVisualizer(QWidget):
     def _on_type_changed(self, node, new_type):
         old_type = node.type
         node.type = new_type
-        
         # Rename element if preference enabled and current name is default-generated
         try:
             if bool(getpref(SET_RENAME_ON_TYPE_CHANGE)) and self._is_default_generated_name(node):
-                import re as _re
-                m = _re.match(r'^(Aperture|Lens|Screen)\s+(\d+)$', str(node.name))
-                if m:
-                    suffix = m.group(2)
-                    desired = f"{new_type} {suffix}"
+                suffix = extract_default_suffix(getattr(node, 'name', ''))
+                if suffix is not None:
+                    display_name = self._internal_to_display.get(new_type, new_type)
+                    desired = f"{display_name} {suffix}"
                     # Validate desired name against other elements
                     existing = []
                     cur = self.head
@@ -414,21 +519,23 @@ class PhysicalSetupVisualizer(QWidget):
                             pass
         except Exception:
             pass
-        
-        # Only set default values if this is a new element or if the specific value wasn't set before
-        if new_type == "Aperture":
-            # Set default aperture path only if it wasn't set before
+        # TODO: set defaults for new type
+        # Defaults for new types
+        if new_type == NEW_TYPE_APERTURE_RESULT:
+            if node.aperture_path is None:
+                node.aperture_path = ""
+        elif new_type == NEW_TYPE_TARGET_INTENSITY:
+            if node.is_range is None:
+                node.is_range = False
+        elif new_type == "Aperture":
             if node.aperture_path is None:
                 node.aperture_path = ""
         elif new_type == "Lens":
-            # Set default focal length only if it wasn't set before
             if node.focal_length is None:
                 node.focal_length = LENS_DEFAULT_FOCUS_MM
         elif new_type == "Screen":
-            # Set default is_range only if it wasn't set before
             if node.is_range is None:
                 node.is_range = False
-        
         self.refresh_table()
 
     def _on_distance_edited(self, node, new_distance):
@@ -650,7 +757,7 @@ class PhysicalSetupVisualizer(QWidget):
             elif node.type == "Screen":
                 params["is_range"] = bool(node.is_range)
                 params["range_end_mm"] = float(node.range_end if node.range_end is not None else node.distance)
-                params["steps"] = int(node.steps if node.steps is not None else 10) # TODO: this always fails and returns 10 
+                params["steps"] = int(node.steps if node.steps is not None else 10) 
             elements.append(engine.Element(distance=node.distance, element_type=node.type.lower(), params=params, name=node.name))
             node = node.next
         return elements
@@ -679,3 +786,61 @@ class PhysicalSetupVisualizer(QWidget):
                     pass
         except Exception:
             pass
+
+    # --- Engine-dependent types ---
+    def _build_type_mapping(self, engine_text: str):
+        # Returns (display_list, display->internal map, internal->display map)
+        engine = (engine_text or "").strip()
+        if engine == "Diffractsim Reverse":
+            display = ["Aperture Result", "Lens", "Target Intensity"]
+            d2i = {
+                "Aperture Result": NEW_TYPE_APERTURE_RESULT,
+                "Lens": "Lens",
+                "Target Intensity": NEW_TYPE_TARGET_INTENSITY,
+            }
+        elif engine == "Bitmap Reverse":
+            display = ["Aperture Result", "Target Intensity"]
+            d2i = {
+                "Aperture Result": NEW_TYPE_APERTURE_RESULT,
+                "Target Intensity": NEW_TYPE_TARGET_INTENSITY,
+            }
+        else:  # Diffractsim Forward
+            display = ["Aperture", "Lens", "Screen"]
+            d2i = {x: x for x in display}
+        i2d = {}
+        for d, i in d2i.items():
+            if i not in i2d:
+                i2d[i] = d
+        return display, d2i, i2d
+
+    def set_engine_mode(self, engine_text: str):
+        self._engine_mode = engine_text
+        self._type_display_list, self._display_to_internal, self._internal_to_display = self._build_type_mapping(engine_text)
+        self.refresh_table()
+        try:
+            self.add_btn_1.setText(self._type_display_list[0] if len(self._type_display_list) > 0 else "Add")
+            self.add_btn_2.setText(self._type_display_list[1] if len(self._type_display_list) > 1 else "Add")
+            # Hide or show third button depending on list size
+            has_third = len(self._type_display_list) > 2
+            self.add_btn_3.setVisible(has_third)
+            if has_third:
+                self.add_btn_3.setText(self._type_display_list[2])
+            # Maintain back-compat aliases regardless of engine (tests use them in Forward mode)
+            self.add_aperture_btn = self.add_btn_1
+            self.add_lens_btn = self.add_btn_2
+            self.add_screen_btn = self.add_btn_3
+        except Exception:
+            pass
+
+    def _on_add_button(self, idx: int):
+        # Map the button index to a display label then to an internal type
+        if idx < 0 or idx >= len(self._type_display_list):
+            return
+        display = self._type_display_list[idx]
+        internal = self._display_to_internal.get(display, display)
+        self.add_element(internal)
+
+    def _on_display_type_changed(self, node, display_text: str):
+        # Translate display label to internal and delegate
+        internal = self._display_to_internal.get(display_text, display_text)
+        self._on_type_changed(node, internal)

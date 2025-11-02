@@ -29,6 +29,20 @@ class WorkspaceTab(QWidget):
         main_layout.addWidget(self.sys_params)
         self.splitter = QSplitter(Qt.Orientation.Vertical)
         self.visualizer = PhysicalSetupVisualizer()
+        # --- Wire engine selector to visualizer engine-dependent UI ---
+        try:
+            cb = self.sys_params.engine_combo
+            # Ensure single connection (idempotent)
+            try:
+                cb.currentTextChanged.disconnect()
+            except Exception:
+                pass
+            cb.currentTextChanged.connect(self.visualizer.set_engine_mode)
+            # Initialize mapping to current combo text
+            self.visualizer.set_engine_mode(cb.currentText())
+        except Exception:
+            pass
+        # ---
         self.splitter.addWidget(self.visualizer)
         self.img_splitter = QSplitter(Qt.Orientation.Horizontal)
         self.aperture_img = ImageContainer("Aperture image")
@@ -215,6 +229,8 @@ class MainWindow(QMainWindow):
             import json
             import os
             from widgets.physical_setup_visualizer import ElementNode
+            # Import reverse-mode constants to recognize types if present
+            from widgets.physical_setup_visualizer import NEW_TYPE_APERTURE_RESULT, NEW_TYPE_TARGET_INTENSITY
 
             # Pick file
             default_dir = os.path.join(os.getcwd(), 'workspaces')
@@ -300,6 +316,10 @@ class MainWindow(QMainWindow):
                         range_end = e.get('range_end_mm')
                         steps = e.get('steps')
                         node = ElementNode(ename, 'Screen', dist, is_range=is_range, range_end=range_end, steps=steps)
+                    elif etype in (NEW_TYPE_APERTURE_RESULT, 'ApertureResult'):
+                        node = ElementNode(ename, NEW_TYPE_APERTURE_RESULT, dist, aperture_path=e.get('aperture_path') or "")
+                    elif etype in (NEW_TYPE_TARGET_INTENSITY, 'TargetIntensity'):
+                        node = ElementNode(ename, NEW_TYPE_TARGET_INTENSITY, dist, is_range=False)
                     else:
                         continue
                     tail.next = node

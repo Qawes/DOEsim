@@ -98,11 +98,11 @@ def suggest_unique_name(base: str, existing: Iterable[str], min_len: int = 3, pa
 
 
 def is_default_generated_element_name(name: str) -> bool:
-    return re.match(r'^(Aperture|Lens|Screen)\s+(\d+)$', str(name or "")) is not None
+    return re.match(r'^(Aperture|Lens|Screen|Aperture\s+Result|Target\s+Intensity)\s+(\d+)$', str(name or "")) is not None
 
 
 def extract_default_suffix(name: str) -> Optional[int]:
-    m = re.match(r'^(Aperture|Lens|Screen)\s+(\d+)$', str(name or ""))
+    m = re.match(r'^(Aperture|Lens|Screen|Aperture\s+Result|Target\s+Intensity)\s+(\d+)$', str(name or ""))
     if not m:
         return None
     try:

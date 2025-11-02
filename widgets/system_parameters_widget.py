@@ -14,12 +14,12 @@ class SystemParametersWidget(QWidget):
         
         # Engine selector (placed first)
         self.engine_combo = QComboBox()
-        # Build model and disable "Bitmap Reverse"
+        # Build model and enable all implemented engines
         eng_model = QStandardItemModel(self.engine_combo)
         for text, disabled, tip in [
             ("Diffractsim Forward", False, None),
             ("Diffractsim Reverse", False, None),
-            ("Bitmap Reverse", True, "Bitmap reverse not supported yet"),
+            ("Bitmap Reverse", False, None),
         ]:
             it = QStandardItem(text)
             if disabled:
