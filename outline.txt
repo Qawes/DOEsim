@@ -21,6 +21,8 @@ MISC - go over name change error tooltip
      - warning when adding too many screens (steps) into a sim
      - info when placing first element into a new engine - add reset warning to pref
      - place it button should actually place the lement in the front, and check it as well
+     - opening preferences while solving will crash
+     - TODO: solver progress
 
 
 AI Model experience:

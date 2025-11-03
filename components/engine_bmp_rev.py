@@ -13,6 +13,7 @@ from pathlib import Path
 from datetime import datetime
 import numpy as np
 from PIL import Image
+import time
 
 from .helpers import slugify as _slugify, Element
 
@@ -24,20 +25,33 @@ except Exception:
     _TYPE_TI = 'TargetIntensity'
     _TYPE_SC = 'Screen'
 
+# Read preferences for retention behavior
+try:
+    from .preferences_window import getpref, SET_RETAIN_WORKING_FILES
+except Exception:
+    def getpref(key, default=None):
+        return default
+    SET_RETAIN_WORKING_FILES = 'retain_working_files'
+
 
 def _ensure_output_dir(workspace_name: str, retain: bool = False) -> Path:
     base = Path("simulation_results") / workspace_name
-    if not retain:
-        # Best-effort cleanup of previous Screen files (PNG/GIF)
-        try:
-            if base.exists():
-                for p in list(base.glob("Screen_*.png")) + list(base.glob("Screen_*.gif")):
-                    try:
-                        p.unlink()
-                    except Exception:
-                        pass
-        except Exception:
-            pass
+    if retain:
+        # Use timestamped subfolder to retain previous runs
+        ts = str(int(time.time()))
+        out = base / ts
+        out.mkdir(parents=True, exist_ok=True)
+        return out
+    # Best-effort cleanup of previous Screen files (PNG/GIF)
+    try:
+        if base.exists():
+            for p in list(base.glob("Screen_*.png")) + list(base.glob("Screen_*.gif")):
+                try:
+                    p.unlink()
+                except Exception:
+                    pass
+    except Exception:
+        pass
     base.mkdir(parents=True, exist_ok=True)
     return base
 
@@ -86,7 +100,8 @@ def calculate_screen_images(
     height = int(ExtentY * Resolution)
     width = int(ExtentX * Resolution)
 
-    out_dir = _ensure_output_dir(workspace_name, retain=False)
+    retain = bool(getpref(SET_RETAIN_WORKING_FILES, False))
+    out_dir = _ensure_output_dir(workspace_name, retain=retain)
 
     # Map reverse-only types to forward-like semantics for this bitmap engine
     mapped: list[Any] = []

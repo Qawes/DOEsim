@@ -409,7 +409,6 @@ class PhysicalSetupVisualizer(QWidget):
         default_distance = float(getpref(SET_DEFAULT_ELEMENT_OFFSET_MM, 10.0))
         default_lens_focus = float(getpref(SET_DEFAULT_LENS_FOCUS_MM, 1000.0))
         dist = last_distance + default_distance
-        # Name generation over existing names
         existing_names = [getattr(e, 'name', '') for e in self._elements]
         if elem_type == TYPE_APERTURE:
             name = generate_unique_default_name(TYPE_APERTURE, existing_names)
@@ -714,7 +713,16 @@ class ElementEditDialog(QDialog):
         name_edit = QLineEdit(getattr(elem, 'name', ''))
         layout.addRow("Name", name_edit)
         self.widgets['name'] = name_edit
-        type_label = QLabel(str(getattr(elem, 'element_type', '')))
+        # Friendly type label
+        t_internal = str(getattr(elem, 'element_type', '') or '')
+        friendly_map = {
+            TYPE_APERTURE: "Aperture",
+            TYPE_LENS: "Lens",
+            TYPE_SCREEN: "Screen",
+            TYPE_APERTURE_RESULT: "Aperture Result",
+            TYPE_TARGET_INTENSITY: "Target Intensity",
+        }
+        type_label = QLabel(friendly_map.get(t_internal, t_internal))
         layout.addRow("Type", type_label)
         # Distance
         dist_spin = QDoubleSpinBox()

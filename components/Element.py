@@ -37,22 +37,31 @@ class Element:
     def from_dict(cls: Type[T], data: Dict[str, Any]) -> T:
         """Factory: build an Element (or subclass) from a dict.
         Expects key 'type' to select subclass.
+        Accepts several legacy keys for back-compat.
         """
         et = str(data.get("type", "")).strip()
         nm = data.get("name")
+        # Common legacy distance key
+        dist_val = data.get("distance", data.get("distance_mm", 0.0))
         if et == TYPE_APERTURE:
+            # Legacy aperture keys and flags
+            img_path = data.get("image_path", data.get("aperture_path", ""))
+            w_mm = data.get("width_mm", data.get("aperture_width_mm", 1.0))
+            h_mm = data.get("height_mm", data.get("aperture_height_mm", 1.0))
+            inv = data.get("is_inverted", data.get("inverted", False))
+            pm = data.get("is_phasemask", data.get("phasemask", False))
             return Aperture(
-                distance=float(data.get("distance", 0.0)),
-                image_path=str(data.get("image_path", "")),
-                width_mm=float(data.get("width_mm", 1.0)),
-                height_mm=float(data.get("height_mm", 1.0)),
-                is_inverted=bool(data.get("is_inverted", False)),
-                is_phasemask=bool(data.get("is_phasemask", False)),
+                distance=float(dist_val),
+                image_path=str(img_path),
+                width_mm=float(w_mm),
+                height_mm=float(h_mm),
+                is_inverted=bool(inv),
+                is_phasemask=bool(pm),
                 name=nm,
             )  # type: ignore
         if et == TYPE_LENS:
             return Lens(
-                distance=float(data.get("distance", 0.0)),
+                distance=float(dist_val),
                 focal_length=float(data.get("focal_length", data.get("f", 0.0))),
                 name=nm,
             )  # type: ignore
@@ -60,29 +69,32 @@ class Element:
             # steps key could be 'step' or 'steps'
             steps_val = data.get("steps", data.get("step", 10))
             return Screen(
-                distance=float(data.get("distance", 0.0)),
+                distance=float(dist_val),
                 is_range=bool(data.get("is_range", False)),
-                range_end=float(data.get("range_end", data.get("range_end_mm", data.get("distance", 0.0)))),
+                range_end=float(data.get("range_end", data.get("range_end_mm", data.get("distance", dist_val)))),
                 steps=int(steps_val),
                 name=nm,
             )  # type: ignore
         if et == TYPE_APERTURE_RESULT:
             return ApertureResult(
-                distance=float(data.get("distance", 0.0)),
+                distance=float(dist_val),
                 width_mm=float(data.get("width_mm", 1.0)),
                 height_mm=float(data.get("height_mm", 1.0)),
                 name=nm,
             )  # type: ignore
         if et == TYPE_TARGET_INTENSITY:
+            img_path = data.get("image_path", data.get("aperture_path", ""))
+            w_mm = data.get("width_mm", data.get("aperture_width_mm", 1.0))
+            h_mm = data.get("height_mm", data.get("aperture_height_mm", 1.0))
             return TargetIntensity(
-                distance=float(data.get("distance", 0.0)),
-                image_path=str(data.get("image_path", "")),
-                width_mm=float(data.get("width_mm", 1.0)),
-                height_mm=float(data.get("height_mm", 1.0)),
+                distance=float(dist_val),
+                image_path=str(img_path),
+                width_mm=float(w_mm),
+                height_mm=float(h_mm),
                 name=nm,
             )  # type: ignore
         # Unknown type -> generic Element
-        return cls(element_type=et or "Unknown", distance=float(data.get("distance", 0.0)), name=nm)
+        return cls(element_type=et or "Unknown", distance=float(dist_val), name=nm)
 
 
 @dataclass

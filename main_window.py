@@ -185,20 +185,20 @@ class MainWindow(QMainWindow):
                 entry = {
                     'name': getattr(e, 'name', None),
                     'type': getattr(e, 'element_type', None),
-                    'distance_mm': float(getattr(e, 'distance', 0.0)),
+                    'distance': float(getattr(e, 'distance', 0.0)),
                 }
                 t = getattr(e, 'element_type', None)
                 if t == TYPE_LENS:
-                    entry['focal_length_mm'] = float(getattr(e, 'focal_length', 0.0) or 0.0)
+                    entry['focal_length'] = float(getattr(e, 'focal_length', 0.0) or 0.0)
                 elif t == TYPE_APERTURE:
                     entry['image_path'] = getattr(e, 'image_path', '') or ''
                     entry['width_mm'] = float(getattr(e, 'width_mm', 1.0) or 1.0)
                     entry['height_mm'] = float(getattr(e, 'height_mm', 1.0) or 1.0)
-                    entry['inverted'] = bool(getattr(e, 'is_inverted', False))
-                    entry['phasemask'] = bool(getattr(e, 'is_phasemask', False))
+                    entry['is_inverted'] = bool(getattr(e, 'is_inverted', False))
+                    entry['is_phasemask'] = bool(getattr(e, 'is_phasemask', False))
                 elif t == TYPE_SCREEN:
                     entry['is_range'] = bool(getattr(e, 'is_range', False))
-                    entry['range_end_mm'] = float(getattr(e, 'range_end', getattr(e, 'distance', 0.0)))
+                    entry['range_end'] = float(getattr(e, 'range_end', getattr(e, 'distance', 0.0)))
                     entry['steps'] = int(getattr(e, 'steps', 10))
                 elif t == TYPE_APERTURE_RESULT:
                     entry['width_mm'] = float(getattr(e, 'width_mm', 1.0) or 1.0)
@@ -326,6 +326,11 @@ class MainWindow(QMainWindow):
                         e['focal_length'] = e.get('focal_length_mm')
                     if 'range_end_mm' in e and 'range_end' not in e:
                         e['range_end'] = e.get('range_end_mm')
+                    # Legacy aperture flags
+                    if 'inverted' in e and 'is_inverted' not in e:
+                        e['is_inverted'] = bool(e.get('inverted'))
+                    if 'phasemask' in e and 'is_phasemask' not in e:
+                        e['is_phasemask'] = bool(e.get('phasemask'))
                     # Ensure distance key exists
                     if 'distance' not in e and 'distance_mm' in e:
                         e['distance'] = e.get('distance_mm')
@@ -492,14 +497,21 @@ class MainWindow(QMainWindow):
 
     def open_preferences_tab(self):
         """Open the Preferences window (standalone), creating it if necessary."""
-        # Reuse existing window if open
+        # Reuse existing window if open and valid
         win = getattr(self, "_preferences_window", None)
-        if win is not None and hasattr(win, 'isVisible') and win.isVisible():
-            win.activateWindow()
-            win.raise_()
-            return
+        if win is not None:
+            try:
+                if hasattr(win, 'isVisible') and win.isVisible():
+                    win.activateWindow()
+                    win.raise_()
+                    return
+            except RuntimeError:
+                # The window was deleted, clear the reference
+                self._preferences_window = None
         # Create and show
         self._preferences_window = PreferencesWindow(self)
+        # Clear reference when window is destroyed
+        self._preferences_window.destroyed.connect(lambda: setattr(self, '_preferences_window', None))
         self._preferences_window.show()
 
     def _restore_window_geometry(self):

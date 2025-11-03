@@ -208,19 +208,31 @@ class PreferencesTab(QWidget):
             except Exception:
                 pass
 
-    def eventFilter(self, obj, event):
-        et = event.type() if event is not None else None
+    def eventFilter(self, a0, a1):
+        et = a1.type() if a1 is not None else None
+        # If this is a spinbox in Preferences, always stop progress UI on focus events
+        if isinstance(a0, (QDoubleSpinBox, QSpinBox)):
+            # Try to find and stop progress in any open ImageContainer (screen_img)
+            try:
+                mw = getattr(self, '_mw', None)
+                if mw is not None and hasattr(mw, 'tabs'):
+                    for i in range(mw.tabs.count()):
+                        tab = mw.tabs.widget(i)
+                        screen_img = getattr(tab, 'screen_img', None)
+                        if screen_img is not None and hasattr(screen_img, '_progress_stop'):
+                            screen_img._progress_stop()
+            except Exception:
+                pass
         if et == QEvent.Type.FocusIn:
             try:
-                # Select all on focus where applicable
-                from .preferences_window import getpref, SET_SELECT_ALL_ON_FOCUS  # safe self import
-            except Exception:
-                getpref = lambda k, d=None: False
-                SET_SELECT_ALL_ON_FOCUS = 'select_all_on_focus'
-            try:
-                if bool(getpref(SET_SELECT_ALL_ON_FOCUS, True)):
-                    if isinstance(obj, (QDoubleSpinBox, QSpinBox)):
-                        le = obj.lineEdit()
+                # Select all on focus where applicable, using module-level preference
+                try:
+                    sel_all = bool(getpref(SET_SELECT_ALL_ON_FOCUS, True))
+                except NameError:
+                    sel_all = True
+                if sel_all:
+                    if isinstance(a0, (QDoubleSpinBox, QSpinBox)):
+                        le = a0.lineEdit()
                         if le is not None:
                             from PyQt6.QtCore import QTimer
                             QTimer.singleShot(0, le.selectAll)
@@ -228,25 +240,25 @@ class PreferencesTab(QWidget):
                 pass
         elif et == QEvent.Type.FocusOut:
             # Clamp values to min/max
-            if isinstance(obj, QDoubleSpinBox):
+            if isinstance(a0, QDoubleSpinBox):
                 try:
-                    obj.interpretText()
-                    v = float(obj.value())
-                    v = max(float(obj.minimum()), min(float(obj.maximum()), v))
-                    if abs(v - obj.value()) > 1e-12:
-                        obj.setValue(v)
+                    a0.interpretText()
+                    v = float(a0.value())
+                    v = max(float(a0.minimum()), min(float(a0.maximum()), v))
+                    if abs(v - a0.value()) > 1e-12:
+                        a0.setValue(v)
                 except Exception:
                     pass
-            elif isinstance(obj, QSpinBox):
+            elif isinstance(a0, QSpinBox):
                 try:
-                    obj.interpretText()
-                    v = int(obj.value())
-                    v = max(int(obj.minimum()), min(int(obj.maximum()), v))
-                    if v != obj.value():
-                        obj.setValue(v)
+                    a0.interpretText()
+                    v = int(a0.value())
+                    v = max(int(a0.minimum()), min(int(a0.maximum()), v))
+                    if v != a0.value():
+                        a0.setValue(v)
                 except Exception:
                     pass
-        return super().eventFilter(obj, event)
+        return super().eventFilter(a0, a1)
 
     def _notify_use_relative_paths_changed(self, v: bool):
         """Save preference and ask all open PhysicalSetupVisualizer widgets to refresh path displays."""

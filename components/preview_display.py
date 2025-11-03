@@ -111,10 +111,27 @@ class ImageContainer(QWidget):
         self.nav_up_btn.setEnabled(bool(enabled) and len(self._items) > 1)
         self.nav_down_btn.setEnabled(bool(enabled) and len(self._items) > 1)
 
+    def _find_latest_output_subdir(self, base_dir: Path) -> Path:
+        """Return the most recent subdirectory (by mtime) in base_dir, or base_dir if none found."""
+        try:
+            subdirs = [d for d in base_dir.iterdir() if d.is_dir() and d.name.isdigit()]
+            if not subdirs:
+                return base_dir
+            # Sort by modification time, descending
+            subdirs.sort(key=lambda d: d.stat().st_mtime, reverse=True)
+            return subdirs[0]
+        except Exception:
+            return base_dir
+
     def solve_async(self):
+        try:
+            from components.preferences_window import getpref, SET_RETAIN_WORKING_FILES
+        except Exception:
+            def getpref(key, default=None):
+                return default
+            SET_RETAIN_WORKING_FILES = 'retain_working_files'
         if self._solve_in_progress:
             return
-        # Prepare progress for screen solves by estimating total frames and baseline PNG count
         try:
             if self._is_screen_panel():
                 tab = self._find_workspace_tab()
@@ -125,7 +142,6 @@ class ImageContainer(QWidget):
                     et = getattr(e, 'element_type', None) or ""
                     et_norm = str(et).replace(' ', '').lower()
                     if et_norm == 'screen':
-                        # Prefer attributes from Element.py.Screen, fallback to params dict
                         is_range = getattr(e, 'is_range', None)
                         steps = getattr(e, 'steps', None)
                         if is_range is None or steps is None:
@@ -142,9 +158,21 @@ class ImageContainer(QWidget):
                         else:
                             total += 1
                 self._progress_total = int(total)
-                self._progress_dir = self._screen_results_dir()
+                base_dir = self._screen_results_dir()
+                retain = bool(getpref(SET_RETAIN_WORKING_FILES, False))
+                self._progress_retain = retain
+                if retain:
+                    # At start, pick the most recent unix-time-named subfolder if any, else base_dir
+                    subdirs = [d for d in base_dir.iterdir() if d.is_dir() and d.name.isdigit()]
+                    if subdirs:
+                        subdirs.sort(key=lambda d: d.stat().st_mtime, reverse=True)
+                        self._progress_dir = subdirs[0]
+                    else:
+                        self._progress_dir = base_dir
+                else:
+                    self._progress_dir = base_dir
                 try:
-                    before = list(self._progress_dir.rglob("*.png"))
+                    before = list(self._progress_dir.rglob("*.png")) if self._progress_dir.exists() else []
                     self._progress_initial_pngs = len(before)
                 except Exception:
                     self._progress_initial_pngs = 0
@@ -155,7 +183,6 @@ class ImageContainer(QWidget):
                         self._progress_timer.timeout.connect(self._progress_poll)
                     self._progress_timer.start(250)
         except Exception:
-            # Non-fatal: progress UI is best-effort
             pass
         self._solve_in_progress = True
         self._set_solve_enabled(False)
@@ -164,15 +191,33 @@ class ImageContainer(QWidget):
 
     def _progress_poll(self):
         try:
-            if self._progress_dir is None or self._progress_total <= 0:
-                return
-            current = list(self._progress_dir.rglob("*.png"))
-            done = max(0, len(current) - int(self._progress_initial_pngs))
-            self._show_progress(done, self._progress_total)
-            if done >= self._progress_total and self._progress_timer is not None:
-                self._progress_timer.stop()
+            from components.preferences_window import getpref, SET_RETAIN_WORKING_FILES
         except Exception:
-            pass
+            def getpref(key, default=None):
+                return default
+            SET_RETAIN_WORKING_FILES = 'retain_working_files'
+        retain = getattr(self, '_progress_retain', False)
+        base_dir = self._screen_results_dir() if self._is_screen_panel() else None
+        # Dynamically follow the most recent unix-time-named subfolder if retain is True
+        if retain and base_dir is not None:
+            subdirs = [d for d in base_dir.iterdir() if d.is_dir() and d.name.isdigit()]
+            if subdirs:
+                subdirs.sort(key=lambda d: d.stat().st_mtime, reverse=True)
+                new_dir = subdirs[0]
+                if self._progress_dir != new_dir:
+                    self._progress_dir = new_dir
+                    try:
+                        before = list(self._progress_dir.rglob("*.png")) if self._progress_dir.exists() else []
+                        self._progress_initial_pngs = len(before)
+                    except Exception:
+                        self._progress_initial_pngs = 0
+        if self._progress_dir is None or self._progress_total <= 0:
+            return
+        current = list(self._progress_dir.rglob("*.png")) if self._progress_dir.exists() else []
+        done = max(0, len(current) - int(self._progress_initial_pngs))
+        self._show_progress(done, self._progress_total)
+        if done >= self._progress_total and self._progress_timer is not None:
+            self._progress_timer.stop()
 
     def _show_progress(self, done: int, total: int):
         try:
@@ -394,7 +439,10 @@ class ImageContainer(QWidget):
         name = getattr(cur, 'name', '(unnamed)')
         if self._is_aperture_panel():
             # Display selected bitmap filename (no path/extension) per spec
-            ap = getattr(cur, 'aperture_path', '') or ''
+            # Prefer Element.py's image_path with legacy fallback to aperture_path
+            ap = getattr(cur, 'image_path', None)
+            if not ap:
+                ap = getattr(cur, 'aperture_path', '') or ''
             base = ''
             try:
                 base = os.path.splitext(os.path.basename(ap))[0]
@@ -426,22 +474,21 @@ class ImageContainer(QWidget):
     def _show_aperture_image(self, node):
         # Display the selected aperture bitmap directly, no solve
         try:
-            path = getattr(node, 'aperture_path', '') or ''
+            # Element.py uses 'image_path' for image-based elements
+            path = getattr(node, 'image_path', None)
+            if not path:
+                # Fallback to legacy attribute name
+                path = getattr(node, 'aperture_path', '') or ''
             if not path:
                 self.image_label.setText("No bitmap selected for this aperture")
                 self._pixmap = None
                 self.image_label.setPixmap(QPixmap())
                 return
-            # Make absolute path for loading
-            abs_path = path
+            # Make absolute path for loading using visualizer helper
             try:
-                # Best-effort: PhysicalSetupVisualizer has a helper for this
                 tab = self._find_workspace_tab()
                 vis = getattr(tab, 'visualizer', None) if tab else None
-                if vis is not None and hasattr(vis, '_abs_path'):
-                    abs_path = vis._abs_path(path)
-                else:
-                    abs_path = os.path.abspath(path)
+                abs_path = vis._abs_path(path) if (vis is not None and hasattr(vis, '_abs_path')) else os.path.abspath(path)
             except Exception:
                 abs_path = os.path.abspath(path)
             if not os.path.exists(abs_path):
@@ -557,13 +604,13 @@ class ImageContainer(QWidget):
                 end_s = self._fmt2(getattr(node, 'range_end', getattr(node, 'distance', 0.0)))
                 steps_s = str(int(getattr(node, 'steps', 0) or 0))
                 candidates = [
-                    # Preferred explicit patterns without Screen_ prefix and without 'to'
-                    f"{slug}_{start_s}_{end_s}_mm_steps_{steps_s}.gif",
-                    # With Screen_ prefix
-                    f"Screen_{slug}_{start_s}_{end_s}_mm_steps_{steps_s}.gif",
-                    # Legacy patterns using 'to'
+                    # Preferred: forward engine naming using 'to'
                     f"{slug}_{start_s}_to_{end_s}_mm_steps_{steps_s}.gif",
+                    # With Screen_ prefix
                     f"Screen_{slug}_{start_s}_to_{end_s}_mm_steps_{steps_s}.gif",
+                    # Other explicit variants without 'to'
+                    f"{slug}_{start_s}_{end_s}_mm_steps_{steps_s}.gif",
+                    f"Screen_{slug}_{start_s}_{end_s}_mm_steps_{steps_s}.gif",
                 ]
                 gif_path = None
                 for name in candidates:

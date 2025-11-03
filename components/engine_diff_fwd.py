@@ -7,6 +7,7 @@ from pathlib import Path
 from PIL import Image
 from datetime import datetime
 import time
+import os
 # Prefer the unified Element model
 from components.Element import (
     Aperture as _Aperture,
@@ -49,6 +50,23 @@ def _etype(e):
 def _ename(e):
     return getattr(e, 'name', None)
 
+def _ensure_white_image() -> str:
+    """Ensure a default white image exists and return its absolute path."""
+    try:
+        ap_dir = os.path.join(os.getcwd(), "aperatures")
+        os.makedirs(ap_dir, exist_ok=True)
+        white_path = os.path.join(ap_dir, "white.png")
+        if not os.path.exists(white_path):
+            try:
+                from PIL import Image as _PILImage
+                img = _PILImage.new("L", (256, 256), 255)
+                img.save(white_path)
+            except Exception:
+                pass
+        return white_path
+    except Exception:
+        return "white.png"
+
 def _aperture_params(e, extent_x_mm: float, extent_y_mm: float):
     # Return image_path, width_mm, height_mm
     img = getattr(e, 'image_path', None)
@@ -64,6 +82,18 @@ def _aperture_params(e, extent_x_mm: float, extent_y_mm: float):
         w = float(extent_x_mm)
     if h is None:
         h = float(extent_y_mm)
+    # Fallback to white image when missing/invalid, with a user-visible warning (stdout)
+    try:
+        abs_img = os.path.abspath(img) if img else None
+        if (not abs_img) or (not os.path.exists(abs_img)):
+            fallback = _ensure_white_image()
+            if not img:
+                print(f"Warning: No image_path set for '{getattr(e, 'name', 'Aperture')}'. Using default white image.")
+            else:
+                print(f"Warning: image not found for '{getattr(e, 'name', 'Aperture')}': {abs_img}. Using default white image.")
+            img = fallback
+    except Exception:
+        pass
     return img, float(w), float(h)
 
 def _lens_focal_length(e):
@@ -147,20 +177,27 @@ def calculate_screen_images(FieldType, Wavelength, ExtentX, ExtentY, Resolution,
         et = _etype(e)
         if et == TYPE_SCREEN:
             is_range, range_end, steps = _screen_params(e)
+            start_mm = float(getattr(e, 'distance', 0.0))
             # Distances to capture for this screen element
-            capture_distances = [float(getattr(e, 'distance', 0.0))]
+            capture_distances = [start_mm]
             if is_range:
                 import numpy as _np
-                capture_distances = list(_np.linspace(float(getattr(e, 'distance', 0.0)), float(range_end), int(steps)))
-            # Create one Screen per slice
+                capture_distances = list(_np.linspace(start_mm, float(range_end), int(steps)))
+            # Create one Screen per slice, attaching grouping hints as attributes
             for i, d_mm in enumerate(capture_distances, start=1):
-                expanded_elements.append(_Screen(
+                scr = _Screen(
                     distance=float(d_mm),
-                    is_range=is_range,
+                    is_range=bool(is_range),
                     range_end=float(range_end if is_range else d_mm),
                     steps=int(steps if is_range else 1),
                     name=_ename(e),
-                ))
+                )
+                # Hints for metadata/GIF grouping
+                setattr(scr, '_range_start_mm', float(start_mm))
+                setattr(scr, '_range_end_mm', float(range_end if is_range else d_mm))
+                setattr(scr, '_slice_index', int(i) if is_range else None)
+                setattr(scr, '_total_steps', int(steps) if is_range else 1)
+                expanded_elements.append(scr)
         else:
             # Pass-through aperture/lens/etc as new instances to avoid mutating UI objects
             if et == TYPE_APERTURE:
@@ -179,7 +216,6 @@ def calculate_screen_images(FieldType, Wavelength, ExtentX, ExtentY, Resolution,
                     name=_ename(e),
                 ))
             else:
-                # Unknown types are ignored here
                 continue
 
     if not expanded_elements:
@@ -226,8 +262,11 @@ def calculate_screen_images(FieldType, Wavelength, ExtentX, ExtentY, Resolution,
             from components.helpers import slugify as _slugify
             return _slugify(nm)
         safe_name = _slug(getattr(e, 'name', None))
-        # Derive slice index from steps/range if applicable by grouping later
-        filename = f"{safe_name}_{d_mm:.2f}_mm.png"
+        slice_idx = getattr(e, '_slice_index', None)
+        if slice_idx is not None:
+            filename = f"{safe_name}_{d_mm:.2f}_mm_slice_{int(slice_idx):03d}.png"
+        else:
+            filename = f"{safe_name}_{d_mm:.2f}_mm.png"
         filepath = output_dir / filename
         # Save
         if screen_uint8.ndim == 3 and screen_uint8.shape[2] == 3:
@@ -243,20 +282,20 @@ def calculate_screen_images(FieldType, Wavelength, ExtentX, ExtentY, Resolution,
         md_entry = {
             'distance_mm': d_mm,
             'is_range': bool(getattr(e, 'is_range', False)),
-            'range_start_mm': None,
-            'range_end_mm': float(getattr(e, 'range_end', d_mm)),
-            'steps': int(getattr(e, 'steps', 1)),
-            'slice_index': None,
+            'range_start_mm': float(getattr(e, '_range_start_mm', getattr(e, 'distance', d_mm))) if bool(getattr(e, 'is_range', False)) else None,
+            'range_end_mm': float(getattr(e, '_range_end_mm', getattr(e, 'range_end', d_mm))) if bool(getattr(e, 'is_range', False)) else None,
+            'steps': int(getattr(e, '_total_steps', getattr(e, 'steps', 1))) if bool(getattr(e, 'is_range', False)) else None,
+            'slice_index': int(slice_idx) if slice_idx is not None else None,
             'filename': filename,
             'shape': list(screen_uint8.shape),
             'name': getattr(e, 'name', None),
         }
         metadata['screens'].append(md_entry)
-        if md_entry['is_range'] and int(md_entry['steps']) > 1:
+        if md_entry['is_range'] and md_entry['steps'] and md_entry['slice_index'] is not None:
             key = (
                 md_entry.get('name'),
-                float(getattr(e, 'distance', d_mm)),
-                float(md_entry.get('range_end_mm') or d_mm),
+                float(md_entry.get('range_start_mm') or 0.0),
+                float(md_entry.get('range_end_mm') or 0.0),
                 int(md_entry.get('steps') or 0),
             )
             range_groups.setdefault(key, []).append((d_mm, filepath))
