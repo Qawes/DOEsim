@@ -7,7 +7,14 @@ from pathlib import Path
 from PIL import Image
 from datetime import datetime
 import time
-from components.helpers import slugify as _slugify, fmt_fixed as _fmt2, Element
+from components.helpers import (
+    slugify as _slugify, 
+    fmt_fixed as _fmt2, 
+    Element,
+    TYPE_APERTURE,
+    TYPE_LENS,
+    TYPE_SCREEN
+)
 
 # Preferences
 try:
@@ -36,12 +43,7 @@ Elements: list of element class objects
 """
 
 def calculate_screen_images(FieldType, Wavelength, ExtentX, ExtentY, Resolution, Elements, Backend="CPU", side=None, workspace_name="Workspace_1"):
-    """
-    Simulate a calculation by returning a random color image as a NumPy array, depending on 'side'.
-    
-    Args:
-        workspace_name: Name of the workspace for organizing output files
-    """
+
     diffractsim.set_backend(Backend)
     height = int(ExtentY * Resolution)
     width = int(ExtentX * Resolution)
@@ -89,7 +91,7 @@ def calculate_screen_images(FieldType, Wavelength, ExtentX, ExtentY, Resolution,
     expanded_elements = []
     for e in Elements:
         et = getattr(e, 'element_type', None)
-        if et == 'screen':
+        if et == TYPE_SCREEN:
             is_range = bool(getattr(e, 'params', {}).get("is_range", False))
             range_end = float(getattr(e, 'params', {}).get("range_end_mm", e.distance))
             steps = int(getattr(e, 'params', {}).get("steps", 10))
@@ -112,7 +114,7 @@ def calculate_screen_images(FieldType, Wavelength, ExtentX, ExtentY, Resolution,
                 })
                 expanded_elements.append(Element(
                     distance=float(d_mm),
-                    element_type='screen',
+                    element_type=TYPE_SCREEN,
                     params=slice_params,
                     name=getattr(e, 'name', None)
                 ))
@@ -125,20 +127,20 @@ def calculate_screen_images(FieldType, Wavelength, ExtentX, ExtentY, Resolution,
             ))
 
     # --- Sort by distance; non-screen elements before screens at equal distance ---
-    expanded_elements.sort(key=lambda el: (float(getattr(el, 'distance', 0.0)), 0 if getattr(el, 'element_type', '') != 'screen' else 1))
+    expanded_elements.sort(key=lambda el: (float(getattr(el, 'distance', 0.0)), 0 if getattr(el, 'element_type', '') != TYPE_SCREEN else 1))
 
     # --- Simulation over expanded list ---
-    propagated_distance = 0.0 * mm
+    propagated_distance = expanded_elements[0].distance * mm
     # For GIF generation: group frames per range
     range_groups = {}
     for e in expanded_elements:
-        if e.element_type != 'screen':
+        if e.element_type != TYPE_SCREEN:
             # Propagate to this element distance, then add element to field
             delta = float(e.distance) * mm - propagated_distance
             if abs(float(delta / mm)) > 1e-12:
                 F.propagate(delta)
                 propagated_distance = float(e.distance) * mm
-            if e.element_type == 'aperture':
+            if e.element_type == TYPE_APERTURE:
                 if "image_path" in e.params: # TODO: the madman actually implemented size, set a flag for this!!
                     width_mm = e.params.get("width_mm", 1.0)
                     height_mm = e.params.get("height_mm", 1.0)
@@ -146,7 +148,7 @@ def calculate_screen_images(FieldType, Wavelength, ExtentX, ExtentY, Resolution,
                     F.add(ApertureFromImage(e.params["image_path"], 
                                             image_size=(width_mm * mm, height_mm * mm), 
                                             simulation = F))
-            elif e.element_type == 'lens':
+            elif e.element_type == TYPE_LENS:
                 F.add(Lens(f=e.params.get("f", 100) * mm))
             continue
 

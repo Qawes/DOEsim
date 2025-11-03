@@ -15,9 +15,12 @@ MISC - go over name change error tooltip
      - light gray as bg
      - apertures override each other - some finicky workaround is needed :(
      - investigate aperture rotated 180deg
-     - opening pref while solution is done and gif playing crashes
      - test for renaming things with illegal chars and bad names (duplicate, empty, short, etc.)
      - move imports and DEFAULT to top if possible
+     - maybe add a warning when importing older workspaces?
+     - warning when adding too many screens (steps) into a sim
+     - info when placing first element into a new engine - add reset warning to pref
+     - place it button should actually place the lement in the front, and check it as well
 
 
 AI Model experience:

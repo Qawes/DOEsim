@@ -195,6 +195,11 @@ def fmt_fixed(v: float, decimals: int = 2) -> str:
     except Exception:
         return str(v)
 
+TYPE_APERTURE = "Aperture"
+TYPE_LENS = "Lens"
+TYPE_SCREEN = "Screen"
+TYPE_APERTURE_RESULT = "ApertureResult"
+TYPE_TARGET_INTENSITY = "TargetIntensity"
 
 class Element:
     """

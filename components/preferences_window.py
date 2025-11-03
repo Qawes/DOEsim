@@ -12,15 +12,17 @@ SET_RENAME_ON_TYPE_CHANGE = 'rename_on_type_change'
 SET_WARN_BEFORE_DELETE = 'warn_before_delete'
 SET_USE_RELATIVE_PATHS = 'use_relative_paths'
 SET_DEFAULT_ELEMENT_OFFSET_MM = 'default_element_offset_mm'
+SET_DEFAULT_LENS_FOCUS_MM = 'default_lens_focus_mm' 
 SET_OPEN_TAB_ON_STARTUP = 'open_tab_on_startup'
 SET_RETAIN_WORKING_FILES = 'retain_working_files'
 SET_AUTO_GENERATE_GIF = 'auto_generate_gif'
-SET_COMMA_AS_DECIMAL = 'comma_as_decimal' # this setting controls whether a comma is used as decimal separator in input fields.
+SET_COMMA_AS_DECIMAL = 'comma_as_decimal' # TODO: Make this work
 SET_ERR_MESS_DUR = 'error_message_duration_ms'
 
 # Module-level defaults to mirror main_window preferences
 _DEFAULT_PREFS = {
     SET_AUTO_OPEN_NEW_WORKSPACE: False,
+    SET_OPEN_TAB_ON_STARTUP: False,
     SET_ASK_BEFORE_CLOSING: True,
     SET_CONFIRM_ON_SAVE: True,
     SET_ENABLE_SCROLLWHEEL: False,
@@ -29,8 +31,8 @@ _DEFAULT_PREFS = {
     SET_WARN_BEFORE_DELETE: True,
     SET_USE_RELATIVE_PATHS: True,
     SET_DEFAULT_ELEMENT_OFFSET_MM: 10.0,
-    SET_OPEN_TAB_ON_STARTUP: False,
-    SET_RETAIN_WORKING_FILES: False,
+    SET_DEFAULT_LENS_FOCUS_MM: 1000.0,
+    SET_RETAIN_WORKING_FILES: True,
     SET_AUTO_GENERATE_GIF: True,
     SET_ERR_MESS_DUR: 3000,
 }
@@ -144,8 +146,14 @@ class PreferencesTab(QWidget):
         self.spin_default_offset.setDecimals(2)
         self.spin_default_offset.setSuffix(" mm")
         self.spin_default_offset.setToolTip("Distance (in millimeters) to insert between newly added elements by default.")
+        self.spin_default_lens_focus = QDoubleSpinBox()
+        self.spin_default_lens_focus.setRange(0.1, 100000.0)
+        self.spin_default_lens_focus.setDecimals(2)
+        self.spin_default_lens_focus.setSuffix(" mm")
+        self.spin_default_lens_focus.setToolTip("Default focal length (in millimeters) for newly added lenses.")
         flp.addRow(self.chk_use_relative)
         flp.addRow("Default distance between elements when adding to the table", self.spin_default_offset)
+        flp.addRow("Default lens focal length", self.spin_default_lens_focus)
         grp_paths.setLayout(flp)
         root.addWidget(grp_paths)
 
@@ -181,7 +189,9 @@ class PreferencesTab(QWidget):
         self.chk_auto_gif.toggled.connect(lambda v: setpref(SET_AUTO_GENERATE_GIF, bool(v)))
         self.chk_use_relative.toggled.connect(self._notify_use_relative_paths_changed)
         # Apply default distance immediately as well
-        self.spin_default_offset.valueChanged.connect(lambda v: (setpref(SET_DEFAULT_ELEMENT_OFFSET_MM, float(v)), self._mw._apply_default_distance(float(v))))
+        self.spin_default_offset.valueChanged.connect(lambda v: setpref(SET_DEFAULT_ELEMENT_OFFSET_MM, float(v)))
+        # Apply default lens focus immediately as well
+        self.spin_default_lens_focus.valueChanged.connect(lambda v: setpref(SET_DEFAULT_LENS_FOCUS_MM, float(v)))
         # Error message duration
         self.spin_err_dur.valueChanged.connect(lambda v: setpref(SET_ERR_MESS_DUR, int(v)))
         # Reset button
@@ -224,6 +234,7 @@ class PreferencesTab(QWidget):
         if hasattr(self, 'chk_auto_gif'):
             self.chk_auto_gif.setChecked(bool(getpref(SET_AUTO_GENERATE_GIF)))
         self.spin_default_offset.setValue(float(getpref(SET_DEFAULT_ELEMENT_OFFSET_MM)))
+        self.spin_default_lens_focus.setValue(float(getpref(SET_DEFAULT_LENS_FOCUS_MM)))
         if hasattr(self, 'spin_err_dur'):
             self.spin_err_dur.setValue(int(getpref(SET_ERR_MESS_DUR)))
 

@@ -10,9 +10,11 @@ from components.preferences_window import (
     SET_RENAME_ON_TYPE_CHANGE,
     SET_WARN_BEFORE_DELETE,
     SET_ERR_MESS_DUR,
+    SET_DEFAULT_LENS_FOCUS_MM,
+    SET_DEFAULT_ELEMENT_OFFSET_MM
 )
 from components.helpers import (
-    is_valid_name,
+    validate_name_against,
     is_default_generated_element_name,
     generate_unique_default_name,
     name_exists,
@@ -20,21 +22,19 @@ from components.helpers import (
     abs_path as _abs_path_helper,
     to_pref_path as _to_pref_path_helper,
     normalize_path_for_display as _normalize_path_for_display,
+    extract_default_suffix,
     DEFAULT_ALLOWED_NAME_PATTERN,
-    Element as Element,
+    Element,
+    TYPE_APERTURE,
+    TYPE_LENS,
+    TYPE_SCREEN,
+    TYPE_APERTURE_RESULT,
+    TYPE_TARGET_INTENSITY,
 )
-from components.helpers import validate_name_against, filter_to_accepted_chars
-from components.helpers import extract_default_suffix
 
 GLOBAL_MINIMUM_DISTANCE_MM = 0
 GLOBAL_MAXIMUM_DISTANCE_MM = 100000.0
-GLOBAL_DEFAULT_DISTANCE_MM = 10.0
-LENS_DEFAULT_FOCUS_MM = 1000.0
 GLOBAL_DISTANCE_TEXT = "Placement"
-GLOBAL_STEPS_DEFAULT = 1
-
-NEW_TYPE_APERTURE_RESULT = "ApertureResult"
-NEW_TYPE_TARGET_INTENSITY = "TargetIntensity"
 
 class PhysicalSetupVisualizer(QWidget):
     def __init__(self, parent=None):
@@ -189,8 +189,6 @@ class PhysicalSetupVisualizer(QWidget):
             pass
 
     def refresh_table(self):
-        # Do NOT coerce existing element internal types to match current engine mode
-        # self._apply_engine_type_coercion_once()  # <-- Removed to prevent unwanted conversion
         self.table.setRowCount(0)
         node = self.head
         idx = 0
@@ -229,8 +227,18 @@ class PhysicalSetupVisualizer(QWidget):
                 dist_item.setFlags(Qt.ItemFlag.ItemIsEnabled)
                 self.table.setItem(idx, 2, dist_item)
             else:
-                if node.type == "Screen":
+                if node.type == TYPE_SCREEN:
                     self.table.setCellWidget(idx, 2, self._build_screen_distance_widget(node))
+                elif node.type == TYPE_APERTURE_RESULT:
+                    # Single distance spinbox for Aperture Result
+                    dist_spin = QDoubleSpinBox(self.table)
+                    dist_spin.installEventFilter(self)
+                    dist_spin.setRange(GLOBAL_MINIMUM_DISTANCE_MM, GLOBAL_MAXIMUM_DISTANCE_MM)
+                    dist_spin.setDecimals(2)
+                    dist_spin.setValue(node.distance)
+                    dist_spin.setSuffix(" mm")
+                    dist_spin.editingFinished.connect(lambda nd=node, w=dist_spin: self._on_distance_edited(nd, w.value()))
+                    self.table.setCellWidget(idx, 2, dist_spin)
                 else:
                     dist_spin = QDoubleSpinBox(self.table)
                     dist_spin.installEventFilter(self)
@@ -245,7 +253,7 @@ class PhysicalSetupVisualizer(QWidget):
                 value_item = QTableWidgetItem("Full white")
                 value_item.setFlags(Qt.ItemFlag.ItemIsEnabled)
                 self.table.setItem(idx, 3, value_item)
-            elif node.type == "Aperture":
+            elif node.type == TYPE_APERTURE:
                 path_widget = QWidget(self.table)
                 path_layout = QHBoxLayout(path_widget)
                 path_layout.setContentsMargins(0, 0, 0, 0)
@@ -259,16 +267,16 @@ class PhysicalSetupVisualizer(QWidget):
                 path_layout.addWidget(path_edit)
                 path_layout.addWidget(browse_btn)
                 self.table.setCellWidget(idx, 3, path_widget)
-            elif node.type == "Lens":
+            elif node.type == TYPE_LENS:
                 f_spin = QDoubleSpinBox(self.table)
                 f_spin.installEventFilter(self)
                 f_spin.setRange(GLOBAL_MINIMUM_DISTANCE_MM, GLOBAL_MAXIMUM_DISTANCE_MM)
                 f_spin.setDecimals(2)
-                f_spin.setValue(node.focal_length or LENS_DEFAULT_FOCUS_MM)
+                f_spin.setValue(node.focal_length or float(getpref(SET_DEFAULT_LENS_FOCUS_MM, 1000.0)))
                 f_spin.setSuffix(" mm")
                 f_spin.editingFinished.connect(lambda nd=node, w=f_spin: self._on_focal_length_edited(nd, w.value()))
                 self.table.setCellWidget(idx, 3, f_spin)
-            elif node.type == "Screen":
+            elif node.type == TYPE_SCREEN:
                 value_widget = QWidget(self.table)
                 vlayout = QHBoxLayout(value_widget)
                 vlayout.setContentsMargins(0, 0, 0, 0)
@@ -277,7 +285,7 @@ class PhysicalSetupVisualizer(QWidget):
                 steps_label = QLabel("steps:", value_widget)
                 steps_spin = QSpinBox(value_widget)
                 steps_spin.installEventFilter(self)
-                steps_spin.setRange(1, 10000)  # Changed minimum from 2 to 1
+                steps_spin.setRange(1, 10000)
                 steps_spin.setValue(int(node.steps or 10))
                 steps_label.setVisible(bool(node.is_range))
                 steps_spin.setVisible(bool(node.is_range))
@@ -288,8 +296,26 @@ class PhysicalSetupVisualizer(QWidget):
                 vlayout.addWidget(steps_spin)
                 vlayout.addStretch()
                 self.table.setCellWidget(idx, 3, value_widget)
-            elif node.type == NEW_TYPE_APERTURE_RESULT:
-                # For now, mirror Aperture UI (path selector)
+            elif node.type == TYPE_APERTURE_RESULT:
+                # Value field: in_front label and place_it button
+                value_widget = QWidget(self.table)
+                vlayout = QHBoxLayout(value_widget)
+                vlayout.setContentsMargins(0, 0, 0, 0)
+                if node.distance == 0:
+                    in_front_label = QLabel("Element placed in front :)", value_widget)
+                    place_btn = QPushButton("---", value_widget)
+                    place_btn.setEnabled(False)
+                else:
+                    in_front_label = QLabel("Please place this in front!", value_widget)
+                    place_btn = QPushButton("Okay", value_widget)
+                    place_btn.setEnabled(True)
+                    place_btn.clicked.connect(lambda _=None, nd=node: self._on_aperture_result_place_it(nd))
+                vlayout.addWidget(in_front_label)
+                vlayout.addWidget(place_btn)
+                vlayout.addStretch()
+                self.table.setCellWidget(idx, 3, value_widget)
+            elif node.type == TYPE_TARGET_INTENSITY:
+                # Now behaves like Aperture: path selector
                 path_widget = QWidget(self.table)
                 path_layout = QHBoxLayout(path_widget)
                 path_layout.setContentsMargins(0, 0, 0, 0)
@@ -302,11 +328,6 @@ class PhysicalSetupVisualizer(QWidget):
                 path_layout.addWidget(path_edit)
                 path_layout.addWidget(browse_btn)
                 self.table.setCellWidget(idx, 3, path_widget)
-            elif node.type == NEW_TYPE_TARGET_INTENSITY:
-                # Target intensity may not need extra value; keep placeholder
-                value_item = QTableWidgetItem("Target intensity")
-                value_item.setFlags(Qt.ItemFlag.ItemIsEnabled)
-                self.table.setItem(idx, 3, value_item)
             node = node.next
             idx += 1
         self._update_delete_button_state()
@@ -330,66 +351,6 @@ class PhysicalSetupVisualizer(QWidget):
         except Exception:
             pass
 
-    def _apply_engine_type_coercion_once(self):
-        try:
-            engine = (self._engine_mode or "").strip()
-            # Determine allowed internal types and mapping for cross-engine substitutions
-            if engine == "Diffractsim Reverse":
-                to_internal = {
-                    "Aperture": NEW_TYPE_APERTURE_RESULT,
-                    "Screen": NEW_TYPE_TARGET_INTENSITY,
-                    "Lens": "Lens",
-                    NEW_TYPE_APERTURE_RESULT: NEW_TYPE_APERTURE_RESULT,
-                    NEW_TYPE_TARGET_INTENSITY: NEW_TYPE_TARGET_INTENSITY,
-                }
-            else:  # Forward and other modes default to forward set
-                to_internal = {
-                    NEW_TYPE_APERTURE_RESULT: "Aperture",
-                    NEW_TYPE_TARGET_INTENSITY: "Screen",
-                    "Aperture": "Aperture",
-                    "Lens": "Lens",
-                    "Screen": "Screen",
-                }
-            # Walk nodes and adjust types as needed
-            cur = self.head.next
-            while cur is not None:
-                desired_key = cur.type or ""
-                desired = to_internal.get(desired_key, cur.type or "")
-                if desired != cur.type:
-                    old = cur.type
-                    cur.type = desired
-                    # Set defaults for new type
-                    if desired in ("Aperture", NEW_TYPE_APERTURE_RESULT):
-                        if cur.aperture_path is None:
-                            cur.aperture_path = ""
-                    elif desired == "Lens":
-                        if cur.focal_length is None:
-                            cur.focal_length = LENS_DEFAULT_FOCUS_MM
-                    elif desired in ("Screen", NEW_TYPE_TARGET_INTENSITY):
-                        if cur.is_range is None:
-                            cur.is_range = False
-                    # Auto-rename if preference and current name looks default-generated
-                    try:
-                        if bool(getpref(SET_RENAME_ON_TYPE_CHANGE)) and self._is_default_generated_name(cur):
-                            suf = extract_default_suffix(getattr(cur, 'name', ''))
-                            if suf is not None:
-                                display_name = self._internal_to_display.get(desired, desired)
-                                candidate = f"{display_name} {suf}"
-                                # Validate against other existing names excluding this node
-                                existing = []
-                                check = self.head
-                                while check is not None:
-                                    if check is not cur:
-                                        existing.append(check.name)
-                                    check = check.next
-                                if validate_name_against(candidate, existing, 1, DEFAULT_ALLOWED_NAME_PATTERN) is True:
-                                    cur.name = candidate
-                    except Exception:
-                        pass
-                cur = cur.next
-        except Exception:
-            pass
-
     def _show_temp_tooltip(self, widget: QWidget, text: str):
         try:
             dur = int(getpref(SET_ERR_MESS_DUR, 3000))
@@ -403,7 +364,7 @@ class PhysicalSetupVisualizer(QWidget):
         # Ensure white.png exists in ./aperatures/
         aperture_dir = os.path.join(os.getcwd(), "aperatures")
         white_path = os.path.join(aperture_dir, "white.png")
-        if elem_type in ("Aperture", NEW_TYPE_APERTURE_RESULT):
+        if elem_type in (TYPE_APERTURE, TYPE_TARGET_INTENSITY):
             if not os.path.exists(aperture_dir):
                 os.makedirs(aperture_dir, exist_ok=True)
             if not os.path.exists(white_path):
@@ -428,27 +389,31 @@ class PhysicalSetupVisualizer(QWidget):
                 height_mm = float(sys_params.extension_y.value())
         except Exception:
             pass
-        if elem_type == "Aperture":
-            name = self._generate_unique_default_name("Aperture")
+        # Dynamically fetch defaults from preferences
+        default_distance = float(getpref(SET_DEFAULT_ELEMENT_OFFSET_MM, 10.0))
+        default_lens_focus = float(getpref(SET_DEFAULT_LENS_FOCUS_MM, 1000.0))
+        if elem_type == TYPE_APERTURE:
+            name = self._generate_unique_default_name(TYPE_APERTURE)
             stored_path = self._to_pref_path(white_path)
-            new_node = Element(name, "Aperture", last_distance + GLOBAL_DEFAULT_DISTANCE_MM, aperture_path=stored_path)
+            new_node = Element(name, TYPE_APERTURE, last_distance + default_distance, aperture_path=stored_path)
             new_node.aperture_width_mm = float(width_mm)
             new_node.aperture_height_mm = float(height_mm)
-        elif elem_type == NEW_TYPE_APERTURE_RESULT:
-            name = self._generate_unique_default_name("Aperture Result")
+        elif elem_type == TYPE_APERTURE_RESULT:
+            name = self._generate_unique_default_name(TYPE_APERTURE_RESULT)
+            # Only distance for Aperture Result
+            new_node = Element(name, TYPE_APERTURE_RESULT, last_distance + default_distance)
+        elif elem_type == TYPE_LENS:
+            name = self._generate_unique_default_name(TYPE_LENS)
+            new_node = Element(name, TYPE_LENS, last_distance + default_distance, focal_length=default_lens_focus)
+        elif elem_type == TYPE_TARGET_INTENSITY:
+            name = self._generate_unique_default_name(TYPE_TARGET_INTENSITY)
             stored_path = self._to_pref_path(white_path)
-            new_node = Element(name, NEW_TYPE_APERTURE_RESULT, last_distance + GLOBAL_DEFAULT_DISTANCE_MM, aperture_path=stored_path)
+            new_node = Element(name, TYPE_TARGET_INTENSITY, last_distance + default_distance, aperture_path=stored_path)
             new_node.aperture_width_mm = float(width_mm)
             new_node.aperture_height_mm = float(height_mm)
-        elif elem_type == "Lens":
-            name = self._generate_unique_default_name("Lens")
-            new_node = Element(name, "Lens", last_distance + GLOBAL_DEFAULT_DISTANCE_MM, focal_length=LENS_DEFAULT_FOCUS_MM)
-        elif elem_type == NEW_TYPE_TARGET_INTENSITY:
-            name = self._generate_unique_default_name("Target Intensity")
-            new_node = Element(name, NEW_TYPE_TARGET_INTENSITY, last_distance + GLOBAL_DEFAULT_DISTANCE_MM, is_range=False, range_end=last_distance + GLOBAL_DEFAULT_DISTANCE_MM, steps=10)
         else:  # Screen
-            name = self._generate_unique_default_name("Screen")
-            new_node = Element(name, "Screen", last_distance + GLOBAL_DEFAULT_DISTANCE_MM, is_range=False, range_end=last_distance + GLOBAL_DEFAULT_DISTANCE_MM, steps=10)
+            name = self._generate_unique_default_name(TYPE_SCREEN)
+            new_node = Element(name, TYPE_SCREEN, last_distance + default_distance, is_range=False, range_end=last_distance + default_distance, steps=10)
         node.next = new_node
         self.refresh_table()
 
@@ -545,22 +510,23 @@ class PhysicalSetupVisualizer(QWidget):
             pass
         # TODO: set defaults for new type
         # Defaults for new types
-        if new_type == NEW_TYPE_APERTURE_RESULT:
+        if new_type == TYPE_APERTURE_RESULT:
+            # Only distance for Aperture Result
+            node.is_range = None
+            node.range_end = None
+            node.steps = None
+        elif new_type == TYPE_TARGET_INTENSITY:
+            # Now treated like an image-based target; ensure has a path field
             if node.aperture_path is None:
                 node.aperture_path = ""
-        elif new_type == NEW_TYPE_TARGET_INTENSITY:
-            if node.is_range is None:
-                node.is_range = False
-        elif new_type == "Aperture":
+        elif new_type == TYPE_APERTURE:
             if node.aperture_path is None:
                 node.aperture_path = ""
-                # Defaults are handles elsewhere i guess
-                # node.aperture_width_mm = None
-                # node.aperture_height_mm = None
-        elif new_type == "Lens":
+                # Defaults handled elsewhere
+        elif new_type == TYPE_LENS:
             if node.focal_length is None:
-                node.focal_length = LENS_DEFAULT_FOCUS_MM
-        elif new_type == "Screen":
+                node.focal_length = float(getpref(SET_DEFAULT_LENS_FOCUS_MM, 1000.0))
+        elif new_type == TYPE_SCREEN:
             if node.is_range is None:
                 node.is_range = False
         self.refresh_table()
@@ -579,7 +545,7 @@ class PhysicalSetupVisualizer(QWidget):
         node.distance = new_distance
         # If this is a range screen, ensure the end distance is not below the start
         try:
-            if getattr(node, 'type', None) == 'Screen' and bool(getattr(node, 'is_range', False)):
+            if getattr(node, 'type', None) == TYPE_SCREEN and bool(getattr(node, 'is_range', False)):
                 if node.range_end is None or float(node.range_end) < float(node.distance):
                     node.range_end = node.distance
                 # If range_end matches distance, set steps to 1 and update spinbox
@@ -695,7 +661,7 @@ class PhysicalSetupVisualizer(QWidget):
         node.range_end = new_end
         # If range_end matches distance, set steps to 1 and update spinbox
         try:
-            if getattr(node, 'type', None) == 'Screen' and bool(getattr(node, 'is_range', False)):
+            if getattr(node, 'type', None) == TYPE_SCREEN and bool(getattr(node, 'is_range', False)):
                 if float(node.range_end) == float(node.distance):
                     node.steps = 1
                     row = self._find_row_for_node(node)
@@ -793,7 +759,7 @@ class PhysicalSetupVisualizer(QWidget):
         row = 1
         cur = self.head.next
         while cur is not None:
-            if cur.type == "Aperture":
+            if cur.type == TYPE_APERTURE:
                 cell = self.table.cellWidget(row, 3)
                 if cell is not None:
                     try:
@@ -821,18 +787,26 @@ class PhysicalSetupVisualizer(QWidget):
             params = {}
             # Keep name in params as non-critical metadata (engines rely on Element.name)
             params["name"] = node.name
-            if node.type == "Aperture":
+            if node.type == TYPE_APERTURE:
                 if node.aperture_path:
                     params["image_path"] = node.aperture_path
                     # Include physical size for image apertures; default to 1.0 mm when unspecified
                     params["width_mm"] = node.aperture_width_mm if getattr(node, 'aperture_width_mm', None) is not None else 1.0
                     params["height_mm"] = node.aperture_height_mm if getattr(node, 'aperture_height_mm', None) is not None else 1.0
-            elif node.type == "Lens":
+            elif node.type == TYPE_LENS:
                 params["f"] = node.focal_length
-            elif node.type == "Screen":
+            elif node.type == TYPE_SCREEN:
                 params["is_range"] = bool(node.is_range)
                 params["range_end_mm"] = float(node.range_end if node.range_end is not None else node.distance)
                 params["steps"] = int(node.steps if node.steps is not None else 10)
+            elif node.type == TYPE_APERTURE_RESULT:
+                # Only export distance for Aperture Result
+                pass
+            elif node.type == TYPE_TARGET_INTENSITY:
+                if node.aperture_path:
+                    params["image_path"] = node.aperture_path
+                    params["width_mm"] = node.aperture_width_mm if getattr(node, 'aperture_width_mm', None) is not None else 1.0
+                    params["height_mm"] = node.aperture_height_mm if getattr(node, 'aperture_height_mm', None) is not None else 1.0
             elements.append(Element(distance=node.distance, element_type=node.element_type, params=params, name=node.name))
             node = node.next
         return elements
@@ -867,20 +841,20 @@ class PhysicalSetupVisualizer(QWidget):
         # Returns (display_list, display->internal map, internal->display map)
         engine = (engine_text or "").strip()
         if engine == "Diffractsim Reverse":
-            display = ["Aperture Result", "Lens", "Target Intensity"]
+            display = ["Aperture Result", TYPE_LENS, "Target Intensity"]
             d2i = {
-                "Aperture Result": NEW_TYPE_APERTURE_RESULT,
-                "Lens": "Lens",
-                "Target Intensity": NEW_TYPE_TARGET_INTENSITY,
+                "Aperture Result": TYPE_APERTURE_RESULT,
+                TYPE_LENS: TYPE_LENS,
+                "Target Intensity": TYPE_TARGET_INTENSITY,
             }
         elif engine == "Bitmap Reverse":
             display = ["Aperture Result", "Target Intensity"]
             d2i = {
-                "Aperture Result": NEW_TYPE_APERTURE_RESULT,
-                "Target Intensity": NEW_TYPE_TARGET_INTENSITY,
+                "Aperture Result": TYPE_APERTURE_RESULT,
+                "Target Intensity": TYPE_TARGET_INTENSITY,
             }
         else:  # Diffractsim Forward
-            display = ["Aperture", "Lens", "Screen"]
+            display = [TYPE_APERTURE, TYPE_LENS, TYPE_SCREEN]
             d2i = {x: x for x in display}
         i2d = {}
         for d, i in d2i.items():
@@ -919,3 +893,7 @@ class PhysicalSetupVisualizer(QWidget):
         # Translate display label to internal and delegate
         internal = self._display_to_internal.get(display_text, display_text)
         self._on_type_changed(node, internal)
+
+    def _on_aperture_result_place_it(self, node):
+        node.distance = 0
+        self.refresh_table()

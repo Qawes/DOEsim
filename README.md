@@ -1,4 +1,4 @@
-# FZP-TDK Github Repo
+# DOESim Github Repo
 
 
 ## The Goal

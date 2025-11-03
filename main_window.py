@@ -20,6 +20,8 @@ DEFAULT_SPLITTER_V_SIZES = [400, 600]            # top/bottom heights (px)
 DEFAULT_SPLITTER_H_SIZES = [600, 600]            # left/right widths (px)
 DEFAULT_TABLE_COLUMN_PROPORTIONS = [0.2, 0.2, 0.2, 0.4]  # Name, Type, Distance, Value
 # ------------------------------------------------------------------------------------
+VERSION = "0.1.1" # Application version string
+# ------------------------------------------------------------------------------------
 
 class WorkspaceTab(QWidget):
     def __init__(self, parent=None):
@@ -110,8 +112,6 @@ class MainWindow(QMainWindow):
         self._placeholder.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
         self._placeholder.setOpenExternalLinks(False)
         self._placeholder.linkActivated.connect(self._on_placeholder_link)
-        # Apply default-dependent globals from preferences
-        self._apply_default_distance(getpref(SET_DEFAULT_ELEMENT_OFFSET_MM))
 
         self.tabs = QTabWidget()
         self.tabs.setTabsClosable(True)  # Enable close buttons on tabs
@@ -206,7 +206,7 @@ class MainWindow(QMainWindow):
                 'elements': elements,
                 'saved_at': __import__('datetime').datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                 'app': 'Diffractsim GUI',
-                'version': '1.0',
+                'version': VERSION,
             }
 
             # Choose file path
@@ -235,7 +235,7 @@ class MainWindow(QMainWindow):
             import os
             from components.helpers import Element
             # Import reverse-mode constants to recognize types if present
-            from components.element_table import NEW_TYPE_APERTURE_RESULT, NEW_TYPE_TARGET_INTENSITY
+            from components.element_table import TYPE_APERTURE_RESULT, TYPE_TARGET_INTENSITY
 
             # Pick file
             default_dir = os.path.join(os.getcwd(), 'workspaces')
@@ -323,12 +323,12 @@ class MainWindow(QMainWindow):
                         range_end = e.get('range_end_mm')
                         steps = e.get('steps')
                         node = Element(ename, 'Screen', dist, is_range=is_range, range_end=range_end, steps=steps)
-                    elif etype in (NEW_TYPE_APERTURE_RESULT, 'ApertureResult'):
-                        node = Element(ename, NEW_TYPE_APERTURE_RESULT, dist, aperture_path=e.get('aperture_path') or "")
+                    elif etype in (TYPE_APERTURE_RESULT, 'ApertureResult'):
+                        node = Element(ename, TYPE_APERTURE_RESULT, dist, aperture_path=e.get('aperture_path') or "")
                         node.aperture_width_mm = float(e.get('aperture_width_mm', 1.0) or 1.0)
                         node.aperture_height_mm = float(e.get('aperture_height_mm', 1.0) or 1.0)
-                    elif etype in (NEW_TYPE_TARGET_INTENSITY, 'TargetIntensity'):
-                        node = Element(ename, NEW_TYPE_TARGET_INTENSITY, dist, is_range=False)
+                    elif etype in (TYPE_TARGET_INTENSITY, 'TargetIntensity'):
+                        node = Element(ename, TYPE_TARGET_INTENSITY, dist, is_range=False)
                     else:
                         continue
                     tail.next = node
@@ -504,13 +504,6 @@ class MainWindow(QMainWindow):
         self._preferences_window = PreferencesWindow(self)
         self._preferences_window.show()
 
-    def _apply_default_distance(self, val: float):
-        try:
-            import components.element_table as psv
-            psv.GLOBAL_DEFAULT_DISTANCE_MM = float(val)
-        except Exception:
-            pass
-
     def _restore_window_geometry(self):
         """Restore QMainWindow geometry using the Qt docs example."""
         try:
@@ -651,7 +644,7 @@ class MainWindow(QMainWindow):
         QMessageBox.information(self, "Not implemented", "This feature is not implemented in the proof of concept.")
 
     def show_about(self):
-        QMessageBox.about(self, "About", "Diffractsim GUI Proof of Concept\n\nDeveloped using PyQt6.")
+        QMessageBox.about(self, "About", f"Diffractsim GUI Proof of Concept\n\nVersion: {VERSION}\n\nDeveloped using PyQt6.")
 
     def open_help(self):
         QDesktopServices.openUrl(QUrl("https://github.com/Qawes/DOEsim"))
