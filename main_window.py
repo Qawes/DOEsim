@@ -13,6 +13,7 @@ from components.preferences_window import (
     SET_OPEN_TAB_ON_STARTUP,
 )
 from components.helpers import validate_name_against, suggest_unique_name
+from components.Element import Element as _ElBase, TYPE_APERTURE, TYPE_LENS, TYPE_SCREEN, TYPE_APERTURE_RESULT, TYPE_TARGET_INTENSITY
 
 # ---------- Default UI layout (edit these to change the initial appearance) ----------
 DEFAULT_WINDOW_GEOMETRY = (350, 100, 1200, 800)  # x, y, width, height
@@ -176,29 +177,37 @@ class MainWindow(QMainWindow):
                 'resolution_px_per_mm': float(sys_params.resolution.value()),
             }
 
-            # Elements (preserve order)
+            # Elements (preserve order) via new list model
             visualizer = tab.visualizer
+            items = visualizer.get_ui_elements() if hasattr(visualizer, 'get_ui_elements') else []
             elements = []
-            node = getattr(visualizer, 'head', None)
-            node = node.next if node is not None else None  # skip light source
-            while node is not None:
+            for e in items:
                 entry = {
-                    'name': node.name,
-                    'type': node.type,
-                    'distance_mm': float(node.distance),
+                    'name': getattr(e, 'name', None),
+                    'type': getattr(e, 'element_type', None),
+                    'distance_mm': float(getattr(e, 'distance', 0.0)),
                 }
-                if node.type == 'Lens':
-                    entry['focal_length_mm'] = float(node.focal_length) if node.focal_length is not None else None
-                elif node.type == 'Aperture':
-                    entry['aperture_path'] = node.aperture_path or ""
-                    entry['aperture_width_mm'] = float(getattr(node, 'aperture_width_mm', 1.0) or 1.0)
-                    entry['aperture_height_mm'] = float(getattr(node, 'aperture_height_mm', 1.0) or 1.0)
-                elif node.type == 'Screen':
-                    entry['is_range'] = bool(node.is_range) if node.is_range is not None else False
-                    entry['range_end_mm'] = float(node.range_end) if node.range_end is not None else float(node.distance)
-                    entry['steps'] = int(node.steps) if node.steps is not None else 10
+                t = getattr(e, 'element_type', None)
+                if t == TYPE_LENS:
+                    entry['focal_length_mm'] = float(getattr(e, 'focal_length', 0.0) or 0.0)
+                elif t == TYPE_APERTURE:
+                    entry['image_path'] = getattr(e, 'image_path', '') or ''
+                    entry['width_mm'] = float(getattr(e, 'width_mm', 1.0) or 1.0)
+                    entry['height_mm'] = float(getattr(e, 'height_mm', 1.0) or 1.0)
+                    entry['inverted'] = bool(getattr(e, 'is_inverted', False))
+                    entry['phasemask'] = bool(getattr(e, 'is_phasemask', False))
+                elif t == TYPE_SCREEN:
+                    entry['is_range'] = bool(getattr(e, 'is_range', False))
+                    entry['range_end_mm'] = float(getattr(e, 'range_end', getattr(e, 'distance', 0.0)))
+                    entry['steps'] = int(getattr(e, 'steps', 10))
+                elif t == TYPE_APERTURE_RESULT:
+                    entry['width_mm'] = float(getattr(e, 'width_mm', 1.0) or 1.0)
+                    entry['height_mm'] = float(getattr(e, 'height_mm', 1.0) or 1.0)
+                elif t == TYPE_TARGET_INTENSITY:
+                    entry['image_path'] = getattr(e, 'image_path', '') or ''
+                    entry['width_mm'] = float(getattr(e, 'width_mm', 1.0) or 1.0)
+                    entry['height_mm'] = float(getattr(e, 'height_mm', 1.0) or 1.0)
                 elements.append(entry)
-                node = node.next
 
             data = {
                 'workspace_name': workspace_name,
@@ -233,10 +242,7 @@ class MainWindow(QMainWindow):
         try:
             import json
             import os
-            from components.helpers import Element
-            # Import reverse-mode constants to recognize types if present
-            from components.element_table import TYPE_APERTURE_RESULT, TYPE_TARGET_INTENSITY
-
+            from components.Element import Element as _ElementFactory
             # Pick file
             default_dir = os.path.join(os.getcwd(), 'workspaces')
             os.makedirs(default_dir, exist_ok=True)
@@ -247,7 +253,6 @@ class MainWindow(QMainWindow):
             with open(file_path, 'r', encoding='utf-8') as f:
                 data = json.load(f)
 
-            # Validate structure lightly
             if not isinstance(data, dict):
                 QMessageBox.warning(self, "Load Workspace", "Invalid workspace file format.")
                 return
@@ -255,7 +260,6 @@ class MainWindow(QMainWindow):
             # Determine unique tab name BEFORE adding the tab
             desired_name = data.get('workspace_name') or "Workspace"
             existing_names = [self.tabs.tabText(i) for i in range(self.tabs.count())]
-            # Use centralized validator
             vr = validate_name_against(desired_name, existing_names, self.MIN_WORKSPACE_NAME_LENGTH, self.WORKSPACE_NAME_ALLOWED_CHARS)
             if vr is True:
                 name = desired_name
@@ -270,10 +274,8 @@ class MainWindow(QMainWindow):
             new_index = self.tabs.addTab(new_tab, name)
             self.tabs.setCurrentIndex(new_index)
             self._update_empty_placeholder()
-            # Apply saved layout (splitters and table columns)
             self._apply_saved_layout_to_tab(new_tab)
 
-            # If the loaded name had to be adjusted, inform the user briefly
             if was_renamed:
                 msg = f"Loaded workspace name was adjusted: '{desired_name}' → '{name}'."
                 if isinstance(rename_reason, str) and rename_reason:
@@ -303,44 +305,40 @@ class MainWindow(QMainWindow):
             except Exception:
                 pass
 
-            # Populate elements (preserve order)
-            visualizer = new_tab.visualizer
-            visualizer.head.next = None
-            tail = visualizer.head
+            # Populate elements (preserve order) using the new model
+            elems: list[_ElBase] = []
             for e in data.get('elements', []):
                 try:
-                    etype = e.get('type')
-                    ename = e.get('name') or f"{etype}"
-                    dist = float(e.get('distance_mm', 0.0))
-                    if etype == 'Aperture':
-                        node = Element(ename, 'Aperture', dist, aperture_path=e.get('aperture_path') or "")
-                        node.aperture_width_mm = float(e.get('aperture_width_mm', 1.0) or 1.0)
-                        node.aperture_height_mm = float(e.get('aperture_height_mm', 1.0) or 1.0)
-                    elif etype == 'Lens':
-                        node = Element(ename, 'Lens', dist, focal_length=e.get('focal_length_mm'))
-                    elif etype == 'Screen':
-                        is_range = bool(e.get('is_range', False))
-                        range_end = e.get('range_end_mm')
-                        steps = e.get('steps')
-                        node = Element(ename, 'Screen', dist, is_range=is_range, range_end=range_end, steps=steps)
-                    elif etype in (TYPE_APERTURE_RESULT, 'ApertureResult'):
-                        node = Element(ename, TYPE_APERTURE_RESULT, dist, aperture_path=e.get('aperture_path') or "")
-                        node.aperture_width_mm = float(e.get('aperture_width_mm', 1.0) or 1.0)
-                        node.aperture_height_mm = float(e.get('aperture_height_mm', 1.0) or 1.0)
-                    elif etype in (TYPE_TARGET_INTENSITY, 'TargetIntensity'):
-                        node = Element(ename, TYPE_TARGET_INTENSITY, dist, is_range=False)
-                    else:
-                        continue
-                    tail.next = node
-                    tail = node
+                    t = e.get('type')
+                    # Normalize reverse labels with spaces
+                    if t == 'Aperture Result':
+                        e['type'] = TYPE_APERTURE_RESULT
+                    elif t == 'Target Intensity':
+                        e['type'] = TYPE_TARGET_INTENSITY
+                    # Support legacy keys
+                    if 'aperture_path' in e and 'image_path' not in e:
+                        e['image_path'] = e.get('aperture_path')
+                    if 'aperture_width_mm' in e and 'width_mm' not in e:
+                        e['width_mm'] = e.get('aperture_width_mm')
+                    if 'aperture_height_mm' in e and 'height_mm' not in e:
+                        e['height_mm'] = e.get('aperture_height_mm')
+                    if 'focal_length_mm' in e and 'focal_length' not in e:
+                        e['focal_length'] = e.get('focal_length_mm')
+                    if 'range_end_mm' in e and 'range_end' not in e:
+                        e['range_end'] = e.get('range_end_mm')
+                    # Ensure distance key exists
+                    if 'distance' not in e and 'distance_mm' in e:
+                        e['distance'] = e.get('distance_mm')
+                    # Inject name
+                    if 'name' not in e:
+                        e['name'] = f"{e.get('type')}"
+                    elem = _ElementFactory.from_dict(e)
+                    elems.append(elem)
                 except Exception:
                     continue
-            visualizer.refresh_table()
+            new_tab.visualizer.set_ui_elements(elems)
 
             # Column widths restoration removed (native header persistence is used)
-
-            # Normally do not display this message
-            # QMessageBox.information(self, "Load Workspace", f"Workspace loaded into new tab:\n{name}")
         except Exception as e:
             QMessageBox.critical(self, "Load Workspace", f"Failed to load workspace:\n{e}")
 

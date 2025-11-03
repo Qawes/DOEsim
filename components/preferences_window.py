@@ -1,5 +1,5 @@
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QGroupBox, QFormLayout, QCheckBox, QDoubleSpinBox, QSpinBox
-from PyQt6.QtCore import Qt, QSettings
+from PyQt6.QtCore import Qt, QSettings, QEvent
 from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import QPushButton, QMessageBox
 
@@ -196,6 +196,57 @@ class PreferencesTab(QWidget):
         self.spin_err_dur.valueChanged.connect(lambda v: setpref(SET_ERR_MESS_DUR, int(v)))
         # Reset button
         self.btn_reset_settings.clicked.connect(self._reset_all_settings)
+
+        # Install event filter on spinboxes for clamping/select-all behavior
+        for w in [
+            self.spin_err_dur,
+            self.spin_default_offset,
+            self.spin_default_lens_focus,
+        ]:
+            try:
+                w.installEventFilter(self)
+            except Exception:
+                pass
+
+    def eventFilter(self, obj, event):
+        et = event.type() if event is not None else None
+        if et == QEvent.Type.FocusIn:
+            try:
+                # Select all on focus where applicable
+                from .preferences_window import getpref, SET_SELECT_ALL_ON_FOCUS  # safe self import
+            except Exception:
+                getpref = lambda k, d=None: False
+                SET_SELECT_ALL_ON_FOCUS = 'select_all_on_focus'
+            try:
+                if bool(getpref(SET_SELECT_ALL_ON_FOCUS, True)):
+                    if isinstance(obj, (QDoubleSpinBox, QSpinBox)):
+                        le = obj.lineEdit()
+                        if le is not None:
+                            from PyQt6.QtCore import QTimer
+                            QTimer.singleShot(0, le.selectAll)
+            except Exception:
+                pass
+        elif et == QEvent.Type.FocusOut:
+            # Clamp values to min/max
+            if isinstance(obj, QDoubleSpinBox):
+                try:
+                    obj.interpretText()
+                    v = float(obj.value())
+                    v = max(float(obj.minimum()), min(float(obj.maximum()), v))
+                    if abs(v - obj.value()) > 1e-12:
+                        obj.setValue(v)
+                except Exception:
+                    pass
+            elif isinstance(obj, QSpinBox):
+                try:
+                    obj.interpretText()
+                    v = int(obj.value())
+                    v = max(int(obj.minimum()), min(int(obj.maximum()), v))
+                    if v != obj.value():
+                        obj.setValue(v)
+                except Exception:
+                    pass
+        return super().eventFilter(obj, event)
 
     def _notify_use_relative_paths_changed(self, v: bool):
         """Save preference and ask all open PhysicalSetupVisualizer widgets to refresh path displays."""

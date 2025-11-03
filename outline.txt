@@ -27,3 +27,6 @@ AI Model experience:
 - GPT 4.1 (free model) adequate, can code with very strict and explicit instructions, good for smaller implementations, and finding functions hidden somewhere in the project. also doesnt eat into the budget
 - Sonnet 4.5 (paid) Limited usage, due to frequent slowdowns / loops. For every edit it goes aroud multiple times for a file, always forgetting newlines. Maybe Python language issue? Creates lots of files, tries to run cmd scripts, even if explicitly told not to.
 - GPT 5 (paid) Slow, sometimes takes really long, not too verbose with every step its doing. Usually manages to solve the query, doesnt generate infinite files. Just invisible (positive)
+
+
+

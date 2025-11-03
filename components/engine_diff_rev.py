@@ -12,30 +12,38 @@ from typing import Any
 
 # Delegate to forward engine to preserve behavior and file outputs
 from . import engine_diff_fwd as _fwd
-from .helpers import Element as _Elem
+# Build mapped Element.py instances
+try:
+    from .Element import Aperture as _Aperture, Screen as _Screen, TYPE_APERTURE_RESULT as _TYPE_AR, TYPE_TARGET_INTENSITY as _TYPE_TI
+except Exception:
+    _Aperture = None
+    _Screen = None
+    _TYPE_AR = 'ApertureResult'
+    _TYPE_TI = 'TargetIntensity'
 
 #This will get deleted prob
 def _map_reverse_elements_to_forward(elements: list[object]) -> list[object]:
     mapped: list[object] = []
     for e in elements or []:
         et = getattr(e, 'element_type', None)
-        params = dict(getattr(e, 'params', {}) or {})
-        if et == 'apertureresult':
-            # Behave like a Screen (capture at distance, supports range)
-            mapped.append(_Elem(
-                name=getattr(e, 'name', None),
-                element_type='screen',
-                distance=float(getattr(e, 'distance', 0.0)),
-                params=params,
-            ))
-        elif et == 'targetintensity':
-            # Behave like an Aperture (image-based)
-            mapped.append(_Elem(
-                name=getattr(e, 'name', None),
-                element_type='aperture',
-                distance=float(getattr(e, 'distance', 0.0)),
-                params=params,
-            ))
+        et_norm = str(et).replace(' ', '').lower() if et is not None else None
+        name = getattr(e, 'name', None)
+        dist = float(getattr(e, 'distance', 0.0))
+        # Image parameters, when present
+        p = getattr(e, 'params', {}) or {}
+        img = getattr(e, 'image_path', None) or p.get('image_path')
+        wmm = getattr(e, 'width_mm', None) or p.get('width_mm')
+        hmm = getattr(e, 'height_mm', None) or p.get('height_mm')
+        if et_norm in ('apertureresult',) or et in (_TYPE_AR, 'ApertureResult'):
+            if _Screen is not None:
+                mapped.append(_Screen(distance=dist, is_range=False, range_end=dist, steps=1, name=name))
+            else:
+                mapped.append(e)
+        elif et_norm in ('targetintensity',) or et in (_TYPE_TI, 'TargetIntensity'):
+            if _Aperture is not None:
+                mapped.append(_Aperture(distance=dist, image_path=img or '', width_mm=float(wmm or 1.0), height_mm=float(hmm or 1.0), name=name))
+            else:
+                mapped.append(e)
         else:
             mapped.append(e)
     return mapped
@@ -64,7 +72,7 @@ def calculate_screen_images(
         ExtentX=ExtentX,
         ExtentY=ExtentY,
         Resolution=Resolution,
-        Elements=Elements, # or use mapped (dont)
+        Elements=mapped,
         Backend=Backend,
         side=side,
         workspace_name=workspace_name,

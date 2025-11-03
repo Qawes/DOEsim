@@ -123,11 +123,22 @@ class ImageContainer(QWidget):
                 total = 0
                 for e in elements:
                     et = getattr(e, 'element_type', None) or ""
-                    if str(et).lower() == 'screen':
-                        p = getattr(e, 'params', {}) or {}
-                        if bool(p.get('is_range', False)):
-                            steps = int(p.get('steps', 0) or 0)
-                            total += max(1, steps)
+                    et_norm = str(et).replace(' ', '').lower()
+                    if et_norm == 'screen':
+                        # Prefer attributes from Element.py.Screen, fallback to params dict
+                        is_range = getattr(e, 'is_range', None)
+                        steps = getattr(e, 'steps', None)
+                        if is_range is None or steps is None:
+                            p = getattr(e, 'params', {}) or {}
+                            if is_range is None:
+                                is_range = bool(p.get('is_range', False))
+                            if steps is None:
+                                try:
+                                    steps = int(p.get('steps', 0) or 0)
+                                except Exception:
+                                    steps = 0
+                        if bool(is_range):
+                            total += max(1, int(steps or 0))
                         else:
                             total += 1
                 self._progress_total = int(total)
@@ -345,13 +356,23 @@ class ImageContainer(QWidget):
         self._items = []
         tab = self._find_workspace_tab()
         vis = getattr(tab, 'visualizer', None) if tab else None
-        node = vis.head.next if (vis and hasattr(vis, 'head')) else None
-        while node is not None:
-            if self._is_aperture_panel() and node.type == 'Aperture':
-                self._items.append(node)
-            elif self._is_screen_panel() and node.type == 'Screen':
-                self._items.append(node)
-            node = node.next
+        elements = []
+        if vis is not None:
+            if hasattr(vis, 'get_ui_elements'):
+                elements = vis.get_ui_elements()
+            elif hasattr(vis, 'export_elements_for_engine'):
+                elements = vis.export_elements_for_engine()
+        # Determine target type for this panel
+        target = None
+        try:
+            from components.Element import TYPE_APERTURE as _TA, TYPE_SCREEN as _TS
+            target = _TA if self._is_aperture_panel() else (_TS if self._is_screen_panel() else None)
+        except Exception:
+            target = 'Aperture' if self._is_aperture_panel() else ('Screen' if self._is_screen_panel() else None)
+        for e in elements or []:
+            et = getattr(e, 'element_type', None)
+            if et == target:
+                self._items.append(e)
 
     def _update_ui_from_selection(self):
         count = len(self._items)

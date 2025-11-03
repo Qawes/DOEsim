@@ -18,3 +18,7 @@ workspaces/
 
 # Ignore screencaps
 *.mkv
+
+# Ignore grapihics project files
+*.psd
+*.pdn

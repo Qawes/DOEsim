@@ -16,6 +16,14 @@ from PIL import Image
 
 from .helpers import slugify as _slugify, Element
 
+# Accept new Element.py constants when available
+try:
+    from .Element import TYPE_APERTURE_RESULT as _TYPE_AR, TYPE_TARGET_INTENSITY as _TYPE_TI, TYPE_SCREEN as _TYPE_SC
+except Exception:
+    _TYPE_AR = 'ApertureResult'
+    _TYPE_TI = 'TargetIntensity'
+    _TYPE_SC = 'Screen'
+
 
 def _ensure_output_dir(workspace_name: str, retain: bool = False) -> Path:
     base = Path("simulation_results") / workspace_name
@@ -32,6 +40,26 @@ def _ensure_output_dir(workspace_name: str, retain: bool = False) -> Path:
             pass
     base.mkdir(parents=True, exist_ok=True)
     return base
+
+
+def _etype_norm(e) -> str:
+    et = getattr(e, 'element_type', None)
+    return str(et).replace(' ', '').lower() if et is not None else ''
+
+
+def _screen_flags(e):
+    # Read screen range fields from attributes or params dict
+    p = getattr(e, 'params', {}) or {}
+    is_range = getattr(e, 'is_range', p.get('is_range', False))
+    rng_end = getattr(e, 'range_end', p.get('range_end_mm', getattr(e, 'distance', 0.0)))
+    steps = getattr(e, 'steps', p.get('steps', 1))
+    try:
+        steps = int(steps)
+        if steps < 1:
+            steps = 1
+    except Exception:
+        steps = 1
+    return bool(is_range), float(rng_end), int(steps)
 
 
 def _synth_image(height: int, width: int) -> np.ndarray:
@@ -60,21 +88,30 @@ def calculate_screen_images(
 
     out_dir = _ensure_output_dir(workspace_name, retain=False)
 
-    # Just like the forward engine, expand screen ranges into slices so the UI
-    # can display series/GIFs in the same way (but we'll only save PNGs here).
+    # Map reverse-only types to forward-like semantics for this bitmap engine
+    mapped: list[Any] = []
+    for e in Elements or []:
+        etn = _etype_norm(e)
+        if etn in ('apertureresult',) or getattr(e, 'element_type', None) in (_TYPE_AR, 'ApertureResult'):
+            # Treat as screen at its distance
+            mapped.append(Element(
+                name=getattr(e, 'name', None),
+                element_type='screen',
+                distance=float(getattr(e, 'distance', 0.0)),
+                params=dict(getattr(e, 'params', {}) or {}),
+            ))
+        else:
+            mapped.append(e)
+
+    # Expand screen ranges into slices
     expanded = []
-    for e in Elements:
-        et = getattr(e, 'element_type', None)
-        if et == 'screen':
-            p = getattr(e, 'params', {}) or {}
-            is_range = bool(p.get('is_range', False))
-            range_end = float(p.get('range_end_mm', getattr(e, 'distance', 0.0)))
-            steps = int(p.get('steps', 1) or 1)
-            if steps < 1:
-                steps = 1
+    for e in mapped:
+        et = _etype_norm(e)
+        if et in ('screen',) or getattr(e, 'element_type', None) in (_TYPE_SC, 'Screen'):
+            is_range, range_end, steps = _screen_flags(e)
             if is_range:
                 import numpy as _np
-                dists = list(_np.linspace(float(getattr(e, 'distance', 0.0)), range_end, steps))
+                dists = list(_np.linspace(float(getattr(e, 'distance', 0.0)), float(range_end), int(steps)))
             else:
                 dists = [float(getattr(e, 'distance', 0.0))]
             for i, d in enumerate(dists, start=1):
@@ -86,19 +123,19 @@ def calculate_screen_images(
                         'is_from_range': is_range,
                         'slice_index': i if is_range else None,
                         'range_start_mm': float(getattr(e, 'distance', 0.0)) if is_range else None,
-                        'range_end_mm': range_end if is_range else None,
-                        'steps': steps if is_range else None,
+                        'range_end_mm': float(range_end) if is_range else None,
+                        'steps': int(steps) if is_range else None,
                     },
                 ))
         else:
             expanded.append(e)
 
     # Sort by distance and ensure non-screens first at ties
-    expanded.sort(key=lambda el: (float(getattr(el, 'distance', 0.0)), 0 if getattr(el, 'element_type', '') != 'screen' else 1))
+    expanded.sort(key=lambda el: (float(getattr(el, 'distance', 0.0)), 0 if _etype_norm(el) != 'screen' else 1))
 
     last_rgb = None
     for e in expanded:
-        if getattr(e, 'element_type', None) != 'screen':
+        if _etype_norm(e) != 'screen':
             continue
         # Produce a synthetic image
         rgb_uint8 = _synth_image(height, width)
