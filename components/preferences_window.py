@@ -318,9 +318,33 @@ class PreferencesTab(QWidget):
         except Exception:
             QMessageBox.critical(self, "Reset settings", "Failed to clear application settings.")
             return
+        # Write all default preferences to QSettings immediately
+        try:
+            for k, v in _DEFAULT_PREFS.items():
+                setpref(k, v)
+        except Exception:
+            pass
         # Reload UI with defaults
         try:
             self._load_current()
+        except Exception:
+            pass
+        # Emit toggled signals for all checkboxes to ensure settings are propagated
+        try:
+            for cb in [
+                self.chk_auto_open,
+                self.chk_ask_before_close,
+                self.chk_open_on_startup,
+                self.chk_confirm_save,
+                self.chk_enable_scrollwheel,
+                self.chk_select_all_on_focus,
+                self.chk_rename_on_type,
+                self.chk_warn_before_delete,
+                self.chk_retain_files,
+                self.chk_auto_gif,
+                self.chk_use_relative
+            ]:
+                cb.toggled.emit(cb.isChecked())
         except Exception:
             pass
         # Reapply runtime defaults immediately (distance/path displays)

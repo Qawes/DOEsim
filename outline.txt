@@ -23,7 +23,7 @@ MISC - go over name change error tooltip
      - place it button should actually place the lement in the front, and check it as well
      - opening preferences while solving will crash
      - TODO: solver progress
-
+     - after a pref reset, some flags (SET_REATIN) doesnt get written, or read in correctly until a change in their value
 
 AI Model experience:
 - GPT 4.1 (free model) adequate, can code with very strict and explicit instructions, good for smaller implementations, and finding functions hidden somewhere in the project. also doesnt eat into the budget

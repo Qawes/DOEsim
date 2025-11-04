@@ -137,7 +137,10 @@ def calculate_screen_images(FieldType, Wavelength, ExtentX, ExtentY, Resolution,
 
     # delete folders if not retained, not just files
     # Output directory behavior based on preferences
-    retain = bool(getpref(SET_RETAIN_WORKING_FILES, False))
+    try:
+        retain = bool(getpref(SET_RETAIN_WORKING_FILES, True))  # Default to True if missing
+    except Exception:
+        retain = True
     base_dir = Path("simulation_results") / workspace_name
     if retain:
         ts = int(time.time())
