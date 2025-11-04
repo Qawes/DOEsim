@@ -15,23 +15,9 @@ import numpy as np
 from PIL import Image
 import time
 
+from components.preferences_window import Prefs, getpref
 from .helpers import slugify as _slugify, Element
-
-# Accept new Element.py constants when available
-try:
-    from .Element import TYPE_APERTURE_RESULT as _TYPE_AR, TYPE_TARGET_INTENSITY as _TYPE_TI, TYPE_SCREEN as _TYPE_SC
-except Exception:
-    _TYPE_AR = 'ApertureResult'
-    _TYPE_TI = 'TargetIntensity'
-    _TYPE_SC = 'Screen'
-
-# Read preferences for retention behavior
-try:
-    from .preferences_window import getpref, SET_RETAIN_WORKING_FILES
-except Exception:
-    def getpref(key, default=None):
-        return default
-    SET_RETAIN_WORKING_FILES = 'retain_working_files'
+from components.Element import Element, ElementParamKey, EType
 
 
 def _ensure_output_dir(workspace_name: str, retain: bool = False) -> Path:
@@ -100,14 +86,14 @@ def calculate_screen_images(
     height = int(ExtentY * Resolution)
     width = int(ExtentX * Resolution)
 
-    retain = bool(getpref(SET_RETAIN_WORKING_FILES, False))
+    retain = bool(getpref(Prefs.RETAIN_WORKING_FILES, False))
     out_dir = _ensure_output_dir(workspace_name, retain=retain)
 
     # Map reverse-only types to forward-like semantics for this bitmap engine
     mapped: list[Any] = []
     for e in Elements or []:
         etn = _etype_norm(e)
-        if etn in ('apertureresult',) or getattr(e, 'element_type', None) in (_TYPE_AR, 'ApertureResult'):
+        if etn in ('apertureresult',) or getattr(e, 'element_type', None) in (EType.APERTURE, 'ApertureResult'):
             # Treat as screen at its distance
             mapped.append(Element(
                 name=getattr(e, 'name', None),
@@ -122,7 +108,7 @@ def calculate_screen_images(
     expanded = []
     for e in mapped:
         et = _etype_norm(e)
-        if et in ('screen',) or getattr(e, 'element_type', None) in (_TYPE_SC, 'Screen'):
+        if et in ('screen',) or getattr(e, 'element_type', None) in (EType.SCREEN, 'Screen'):
             is_range, range_end, steps = _screen_flags(e)
             if is_range:
                 import numpy as _np

@@ -2,39 +2,41 @@ from PyQt6.QtWidgets import QWidget, QVBoxLayout, QGroupBox, QFormLayout, QCheck
 from PyQt6.QtCore import Qt, QSettings, QEvent
 from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import QPushButton, QMessageBox
+from enum import Enum
 
-SET_AUTO_OPEN_NEW_WORKSPACE = 'auto_open_new_workspace'
-SET_ASK_BEFORE_CLOSING = 'ask_before_closing'
-SET_CONFIRM_ON_SAVE = 'confirm_on_save'
-SET_ENABLE_SCROLLWHEEL = 'enable_scrollwheel'
-SET_SELECT_ALL_ON_FOCUS = 'select_all_on_focus'
-SET_RENAME_ON_TYPE_CHANGE = 'rename_on_type_change'
-SET_WARN_BEFORE_DELETE = 'warn_before_delete'
-SET_USE_RELATIVE_PATHS = 'use_relative_paths'
-SET_DEFAULT_ELEMENT_OFFSET_MM = 'default_element_offset_mm'
-SET_DEFAULT_LENS_FOCUS_MM = 'default_lens_focus_mm' 
-SET_OPEN_TAB_ON_STARTUP = 'open_tab_on_startup'
-SET_RETAIN_WORKING_FILES = 'retain_working_files'
-SET_AUTO_GENERATE_GIF = 'auto_generate_gif'
-SET_COMMA_AS_DECIMAL = 'comma_as_decimal' # TODO: Make this work
-SET_ERR_MESS_DUR = 'error_message_duration_ms'
+class Prefs(str, Enum):
+    AUTO_OPEN_NEW_WORKSPACE = 'auto_open_new_workspace'
+    ASK_BEFORE_CLOSING = 'ask_before_closing'
+    CONFIRM_ON_SAVE = 'confirm_on_save'
+    ENABLE_SCROLLWHEEL = 'enable_scrollwheel'
+    SELECT_ALL_ON_FOCUS = 'select_all_on_focus'
+    RENAME_ON_TYPE_CHANGE = 'rename_on_type_change'
+    WARN_BEFORE_DELETE = 'warn_before_delete'
+    USE_RELATIVE_PATHS = 'use_relative_paths'
+    DEFAULT_ELEMENT_OFFSET_MM = 'default_element_offset_mm'
+    DEFAULT_LENS_FOCUS_MM = 'default_lens_focus_mm' 
+    OPEN_TAB_ON_STARTUP = 'open_tab_on_startup'
+    RETAIN_WORKING_FILES = 'retain_working_files'
+    AUTO_GENERATE_GIF = 'auto_generate_gif'
+    COMMA_AS_DECIMAL = 'comma_as_decimal' # TODO: Make this work
+    ERR_MESS_DUR = 'error_message_duration_ms'
 
 # Module-level defaults to mirror main_window preferences
 _DEFAULT_PREFS = {
-    SET_AUTO_OPEN_NEW_WORKSPACE: False,
-    SET_OPEN_TAB_ON_STARTUP: False,
-    SET_ASK_BEFORE_CLOSING: True,
-    SET_CONFIRM_ON_SAVE: True,
-    SET_ENABLE_SCROLLWHEEL: False,
-    SET_SELECT_ALL_ON_FOCUS: True,
-    SET_RENAME_ON_TYPE_CHANGE: True,
-    SET_WARN_BEFORE_DELETE: True,
-    SET_USE_RELATIVE_PATHS: True,
-    SET_DEFAULT_ELEMENT_OFFSET_MM: 10.0,
-    SET_DEFAULT_LENS_FOCUS_MM: 1000.0,
-    SET_RETAIN_WORKING_FILES: True,
-    SET_AUTO_GENERATE_GIF: True,
-    SET_ERR_MESS_DUR: 3000,
+    Prefs.AUTO_OPEN_NEW_WORKSPACE: False,
+    Prefs.OPEN_TAB_ON_STARTUP: False,
+    Prefs.ASK_BEFORE_CLOSING: True,
+    Prefs.CONFIRM_ON_SAVE: True,
+    Prefs.ENABLE_SCROLLWHEEL: False,
+    Prefs.SELECT_ALL_ON_FOCUS: True,
+    Prefs.RENAME_ON_TYPE_CHANGE: True,
+    Prefs.WARN_BEFORE_DELETE: True,
+    Prefs.USE_RELATIVE_PATHS: True,
+    Prefs.DEFAULT_ELEMENT_OFFSET_MM: 10.0,
+    Prefs.DEFAULT_LENS_FOCUS_MM: 1000.0,
+    Prefs.RETAIN_WORKING_FILES: True,
+    Prefs.AUTO_GENERATE_GIF: True,
+    Prefs.ERR_MESS_DUR: 3000,
 }
 
 def _coerce_type(val, typ):
@@ -58,21 +60,24 @@ def getpref(key: str, default=None):
         The stored preference value (type-coerced to the default's type when possible).
     """
     s = QSettings("diffractsim", "app")
-    if default is None and key in _DEFAULT_PREFS:
-        default = _DEFAULT_PREFS[key]
+    # Accept both str and Prefs for key
+    key_enum = Prefs(key) if not isinstance(key, Prefs) else key
+    if default is None and key_enum in _DEFAULT_PREFS:
+        default = _DEFAULT_PREFS[key_enum]
     if default is None:
-        return s.value(key, None)
+        return s.value(str(key_enum), None)
     typ = type(default)
     try:
-        return s.value(key, default, type=typ)
+        return s.value(str(key_enum), default, type=typ)
     except Exception:
-        v = s.value(key, default)
+        v = s.value(str(key_enum), default)
         return _coerce_type(v, typ)
 
 def setpref(key: str, value):
     """Save an application preference to QSettings."""
     s = QSettings("diffractsim", "app")
-    s.setValue(key, value)
+    key_enum = Prefs(key) if not isinstance(key, Prefs) else key
+    s.setValue(str(key_enum), value)
 
 class PreferencesTab(QWidget):
     """Settings tab for application preferences."""
@@ -177,23 +182,23 @@ class PreferencesTab(QWidget):
         # Initialize values from preferences
         self._load_current()
         # Wire up changes to module-level setpref using shared constants
-        self.chk_auto_open.toggled.connect(lambda v: setpref(SET_AUTO_OPEN_NEW_WORKSPACE, bool(v)))
-        self.chk_ask_before_close.toggled.connect(lambda v: setpref(SET_ASK_BEFORE_CLOSING, bool(v)))
-        self.chk_open_on_startup.toggled.connect(lambda v: setpref(SET_OPEN_TAB_ON_STARTUP, bool(v)))
-        self.chk_confirm_save.toggled.connect(lambda v: setpref(SET_CONFIRM_ON_SAVE, bool(v)))
-        self.chk_enable_scrollwheel.toggled.connect(lambda v: setpref(SET_ENABLE_SCROLLWHEEL, bool(v)))
-        self.chk_select_all_on_focus.toggled.connect(lambda v: setpref(SET_SELECT_ALL_ON_FOCUS, bool(v)))
-        self.chk_rename_on_type.toggled.connect(lambda v: setpref(SET_RENAME_ON_TYPE_CHANGE, bool(v)))
-        self.chk_warn_before_delete.toggled.connect(lambda v: setpref(SET_WARN_BEFORE_DELETE, bool(v)))
-        self.chk_retain_files.toggled.connect(lambda v: setpref(SET_RETAIN_WORKING_FILES, bool(v)))
-        self.chk_auto_gif.toggled.connect(lambda v: setpref(SET_AUTO_GENERATE_GIF, bool(v)))
+        self.chk_auto_open.toggled.connect(lambda v: setpref(Prefs.AUTO_OPEN_NEW_WORKSPACE, bool(v)))
+        self.chk_ask_before_close.toggled.connect(lambda v: setpref(Prefs.ASK_BEFORE_CLOSING, bool(v)))
+        self.chk_open_on_startup.toggled.connect(lambda v: setpref(Prefs.OPEN_TAB_ON_STARTUP, bool(v)))
+        self.chk_confirm_save.toggled.connect(lambda v: setpref(Prefs.CONFIRM_ON_SAVE, bool(v)))
+        self.chk_enable_scrollwheel.toggled.connect(lambda v: setpref(Prefs.ENABLE_SCROLLWHEEL, bool(v)))
+        self.chk_select_all_on_focus.toggled.connect(lambda v: setpref(Prefs.SELECT_ALL_ON_FOCUS, bool(v)))
+        self.chk_rename_on_type.toggled.connect(lambda v: setpref(Prefs.RENAME_ON_TYPE_CHANGE, bool(v)))
+        self.chk_warn_before_delete.toggled.connect(lambda v: setpref(Prefs.WARN_BEFORE_DELETE, bool(v)))
+        self.chk_retain_files.toggled.connect(lambda v: setpref(Prefs.RETAIN_WORKING_FILES, bool(v)))
+        self.chk_auto_gif.toggled.connect(lambda v: setpref(Prefs.AUTO_GENERATE_GIF, bool(v)))
         self.chk_use_relative.toggled.connect(self._notify_use_relative_paths_changed)
         # Apply default distance immediately as well
-        self.spin_default_offset.valueChanged.connect(lambda v: setpref(SET_DEFAULT_ELEMENT_OFFSET_MM, float(v)))
+        self.spin_default_offset.valueChanged.connect(lambda v: setpref(Prefs.DEFAULT_ELEMENT_OFFSET_MM, float(v)))
         # Apply default lens focus immediately as well
-        self.spin_default_lens_focus.valueChanged.connect(lambda v: setpref(SET_DEFAULT_LENS_FOCUS_MM, float(v)))
+        self.spin_default_lens_focus.valueChanged.connect(lambda v: setpref(Prefs.DEFAULT_LENS_FOCUS_MM, float(v)))
         # Error message duration
-        self.spin_err_dur.valueChanged.connect(lambda v: setpref(SET_ERR_MESS_DUR, int(v)))
+        self.spin_err_dur.valueChanged.connect(lambda v: setpref(Prefs.ERR_MESS_DUR, int(v)))
         # Reset button
         self.btn_reset_settings.clicked.connect(self._reset_all_settings)
 
@@ -227,7 +232,7 @@ class PreferencesTab(QWidget):
             try:
                 # Select all on focus where applicable, using module-level preference
                 try:
-                    sel_all = bool(getpref(SET_SELECT_ALL_ON_FOCUS, True))
+                    sel_all = bool(getpref(Prefs.SELECT_ALL_ON_FOCUS, True))
                 except NameError:
                     sel_all = True
                 if sel_all:
@@ -263,7 +268,7 @@ class PreferencesTab(QWidget):
     def _notify_use_relative_paths_changed(self, v: bool):
         """Save preference and ask all open PhysicalSetupVisualizer widgets to refresh path displays."""
         try:
-            setpref(SET_USE_RELATIVE_PATHS, bool(v))
+            setpref(Prefs.USE_RELATIVE_PATHS, bool(v))
         except Exception:
             pass
         # Notify all open visualizers
@@ -282,24 +287,24 @@ class PreferencesTab(QWidget):
             pass
 
     def _load_current(self):
-        self.chk_auto_open.setChecked(bool(getpref(SET_AUTO_OPEN_NEW_WORKSPACE)))
-        self.chk_ask_before_close.setChecked(bool(getpref(SET_ASK_BEFORE_CLOSING)))
-        self.chk_confirm_save.setChecked(bool(getpref(SET_CONFIRM_ON_SAVE)))
-        self.chk_enable_scrollwheel.setChecked(bool(getpref(SET_ENABLE_SCROLLWHEEL)))
-        self.chk_select_all_on_focus.setChecked(bool(getpref(SET_SELECT_ALL_ON_FOCUS)))
-        self.chk_rename_on_type.setChecked(bool(getpref(SET_RENAME_ON_TYPE_CHANGE)))
-        self.chk_warn_before_delete.setChecked(bool(getpref(SET_WARN_BEFORE_DELETE)))
-        self.chk_use_relative.setChecked(bool(getpref(SET_USE_RELATIVE_PATHS)))
-        self.chk_open_on_startup.setChecked(bool(getpref(SET_OPEN_TAB_ON_STARTUP)))
+        self.chk_auto_open.setChecked(bool(getpref(Prefs.AUTO_OPEN_NEW_WORKSPACE)))
+        self.chk_ask_before_close.setChecked(bool(getpref(Prefs.ASK_BEFORE_CLOSING)))
+        self.chk_confirm_save.setChecked(bool(getpref(Prefs.CONFIRM_ON_SAVE)))
+        self.chk_enable_scrollwheel.setChecked(bool(getpref(Prefs.ENABLE_SCROLLWHEEL)))
+        self.chk_select_all_on_focus.setChecked(bool(getpref(Prefs.SELECT_ALL_ON_FOCUS)))
+        self.chk_rename_on_type.setChecked(bool(getpref(Prefs.RENAME_ON_TYPE_CHANGE)))
+        self.chk_warn_before_delete.setChecked(bool(getpref(Prefs.WARN_BEFORE_DELETE)))
+        self.chk_use_relative.setChecked(bool(getpref(Prefs.USE_RELATIVE_PATHS)))
+        self.chk_open_on_startup.setChecked(bool(getpref(Prefs.OPEN_TAB_ON_STARTUP)))
         # New
         if hasattr(self, 'chk_retain_files'):
-            self.chk_retain_files.setChecked(bool(getpref(SET_RETAIN_WORKING_FILES)))
+            self.chk_retain_files.setChecked(bool(getpref(Prefs.RETAIN_WORKING_FILES)))
         if hasattr(self, 'chk_auto_gif'):
-            self.chk_auto_gif.setChecked(bool(getpref(SET_AUTO_GENERATE_GIF)))
-        self.spin_default_offset.setValue(float(getpref(SET_DEFAULT_ELEMENT_OFFSET_MM)))
-        self.spin_default_lens_focus.setValue(float(getpref(SET_DEFAULT_LENS_FOCUS_MM)))
+            self.chk_auto_gif.setChecked(bool(getpref(Prefs.AUTO_GENERATE_GIF)))
+        self.spin_default_offset.setValue(float(getpref(Prefs.DEFAULT_ELEMENT_OFFSET_MM)))
+        self.spin_default_lens_focus.setValue(float(getpref(Prefs.DEFAULT_LENS_FOCUS_MM)))
         if hasattr(self, 'spin_err_dur'):
-            self.spin_err_dur.setValue(int(getpref(SET_ERR_MESS_DUR)))
+            self.spin_err_dur.setValue(int(getpref(Prefs.ERR_MESS_DUR)))
 
     def _reset_all_settings(self):
         """Delete all user-specific settings and restore defaults immediately."""
@@ -349,7 +354,7 @@ class PreferencesTab(QWidget):
             pass
         # Reapply runtime defaults immediately (distance/path displays)
         try:
-            self._mw._apply_default_distance(getpref(SET_DEFAULT_ELEMENT_OFFSET_MM))
+            self._mw._apply_default_distance(getpref(Prefs.DEFAULT_ELEMENT_OFFSET_MM))
         except Exception:
             pass
         # Restore main window geometry and per-tab layouts to defaults

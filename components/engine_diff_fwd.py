@@ -13,24 +13,19 @@ from components.Element import (
     Aperture as _Aperture,
     Lens as _Lens,
     Screen as _Screen,
-    TYPE_APERTURE,
-    TYPE_LENS,
-    TYPE_SCREEN,
+    EType
 )
 
-# Preferences
-try:
-    from components.preferences_window import getpref
-    from components.preferences_window import (
-        SET_RETAIN_WORKING_FILES,
-        SET_AUTO_GENERATE_GIF,
-    )
-except Exception:
-    # Fallbacks if preferences module is unavailable
-    def getpref(key, default=None):
-        return default
-    SET_RETAIN_WORKING_FILES = 'retain_working_files'
-    SET_AUTO_GENERATE_GIF = 'auto_generate_gif'
+from components.helpers import (
+    Element,
+    ensure_white_image,
+    check_image_path,
+)
+
+from components.preferences_window import (
+    Prefs,
+    getpref
+)
 
 
 """
@@ -50,23 +45,6 @@ def _etype(e):
 def _ename(e):
     return getattr(e, 'name', None)
 
-def _ensure_white_image() -> str:
-    """Ensure a default white image exists and return its absolute path."""
-    try:
-        ap_dir = os.path.join(os.getcwd(), "aperatures")
-        os.makedirs(ap_dir, exist_ok=True)
-        white_path = os.path.join(ap_dir, "white.png")
-        if not os.path.exists(white_path):
-            try:
-                from PIL import Image as _PILImage
-                img = _PILImage.new("L", (256, 256), 255)
-                img.save(white_path)
-            except Exception:
-                pass
-        return white_path
-    except Exception:
-        return "white.png"
-
 def _aperture_params(e, extent_x_mm: float, extent_y_mm: float):
     # Return image_path, width_mm, height_mm
     img = getattr(e, 'image_path', None)
@@ -84,13 +62,17 @@ def _aperture_params(e, extent_x_mm: float, extent_y_mm: float):
         h = float(extent_y_mm)
     # Fallback to white image when missing/invalid, with a user-visible warning (stdout)
     try:
-        abs_img = os.path.abspath(img) if img else None
-        if (not abs_img) or (not os.path.exists(abs_img)):
-            fallback = _ensure_white_image()
-            if not img:
-                print(f"Warning: No image_path set for '{getattr(e, 'name', 'Aperture')}'. Using default white image.")
-            else:
-                print(f"Warning: image not found for '{getattr(e, 'name', 'Aperture')}': {abs_img}. Using default white image.")
+        fallback = ensure_white_image()
+        if fallback == "":
+            print("No fallback available for aperture image., returning") # TODO: handle this properly
+            return img, float(w), float(h)
+        #abs_img = os.path.abspath(img) if img else None
+        #if (not abs_img) or (not os.path.exists(abs_img)):
+        #    fallback = ensure_white_image()
+        #    if not img:
+        #        print(f"Warning: No image_path set for '{getattr(e, 'name', 'Aperture')}'. Using default white image.")
+        #    else:
+        #        print(f"Warning: image not found for '{getattr(e, 'name', 'Aperture')}': {abs_img}. Using default white image.")
             img = fallback
     except Exception:
         pass
@@ -138,7 +120,7 @@ def calculate_screen_images(FieldType, Wavelength, ExtentX, ExtentY, Resolution,
     # delete folders if not retained, not just files
     # Output directory behavior based on preferences
     try:
-        retain = bool(getpref(SET_RETAIN_WORKING_FILES, True))  # Default to True if missing
+        retain = bool(getpref(Prefs.RETAIN_WORKING_FILES, True))  # Default to True if missing
     except Exception:
         retain = True
     base_dir = Path("simulation_results") / workspace_name
@@ -178,7 +160,7 @@ def calculate_screen_images(FieldType, Wavelength, ExtentX, ExtentY, Resolution,
     expanded_elements = []
     for e in Elements or []:
         et = _etype(e)
-        if et == TYPE_SCREEN:
+        if et == EType.SCREEN:
             is_range, range_end, steps = _screen_params(e)
             start_mm = float(getattr(e, 'distance', 0.0))
             # Distances to capture for this screen element
@@ -203,7 +185,7 @@ def calculate_screen_images(FieldType, Wavelength, ExtentX, ExtentY, Resolution,
                 expanded_elements.append(scr)
         else:
             # Pass-through aperture/lens/etc as new instances to avoid mutating UI objects
-            if et == TYPE_APERTURE:
+            if et == EType.APERTURE:
                 img, wmm, hmm = _aperture_params(e, ExtentX, ExtentY)
                 expanded_elements.append(_Aperture(
                     distance=float(getattr(e, 'distance', 0.0)),
@@ -212,7 +194,7 @@ def calculate_screen_images(FieldType, Wavelength, ExtentX, ExtentY, Resolution,
                     height_mm=float(hmm),
                     name=_ename(e),
                 ))
-            elif et == TYPE_LENS:
+            elif et == EType.LENS:
                 expanded_elements.append(_Lens(
                     distance=float(getattr(e, 'distance', 0.0)),
                     focal_length=_lens_focal_length(e),
@@ -225,27 +207,27 @@ def calculate_screen_images(FieldType, Wavelength, ExtentX, ExtentY, Resolution,
         return np.zeros((height, width, 3), dtype=np.uint8)
 
     # --- Sort by distance; non-screen elements before screens at equal distance ---
-    expanded_elements.sort(key=lambda el: (float(getattr(el, 'distance', 0.0)), 0 if getattr(el, 'element_type', '') != TYPE_SCREEN else 1))
+    expanded_elements.sort(key=lambda el: (float(getattr(el, 'distance', 0.0)), 0 if getattr(el, 'element_type', '') != EType.SCREEN else 1))
 
     # --- Simulation over expanded list ---
     propagated_distance = expanded_elements[0].distance * mm
     # For GIF generation: group frames per range
     range_groups = {}
     for e in expanded_elements:
-        if e.element_type != TYPE_SCREEN:
+        if e.element_type != EType.SCREEN:
             # Propagate to this element distance, then add element to field
             delta = float(e.distance) * mm - propagated_distance
             if abs(float(delta / mm)) > 1e-12:
                 F.propagate(delta)
                 propagated_distance = float(e.distance) * mm
-            if e.element_type == TYPE_APERTURE:
+            if e.element_type == EType.APERTURE:
                 if getattr(e, 'image_path', None):
                     width_mm = getattr(e, 'width_mm', ExtentX)
                     height_mm = getattr(e, 'height_mm', ExtentY)
                     F.add(ApertureFromImage(e.image_path, 
                                             image_size=(width_mm * mm, height_mm * mm), 
                                             simulation = F))
-            elif e.element_type == TYPE_LENS:
+            elif e.element_type == EType.LENS:
                 F.add(Lens(f=getattr(e, 'focal_length', 0.0) * mm))
             continue
 
@@ -305,7 +287,7 @@ def calculate_screen_images(FieldType, Wavelength, ExtentX, ExtentY, Resolution,
 
     # --- Optional: generate GIFs for screen ranges ---
     try:
-        if bool(getpref(SET_AUTO_GENERATE_GIF, True)) and range_groups:
+        if bool(getpref(Prefs.AUTO_GENERATE_GIF, True)) and range_groups:
             for key, frames in range_groups.items():
                 frames_sorted = [fp for _, fp in sorted(frames, key=lambda t: t[0])]
                 if len(frames_sorted) < 2:
@@ -367,7 +349,7 @@ def calculate_screen_images(FieldType, Wavelength, ExtentX, ExtentY, Resolution,
             if screen.get('range_start_mm') is not None:
                 f.write(f"  Range Start: {screen.get('range_start_mm')} mm\n")
             if screen.get('range_end_mm') is not None:
-                f.write(f"  Range End: {screen.get('range_end_mm')} mm\n")
+                f.write(f"  Range End: {screen['range_end_mm']} mm\n")
             if screen.get('steps') is not None:
                 f.write(f"  Steps: {screen['steps']}\n")
             f.write(f"  Filename: {screen['filename']}\n")
@@ -375,11 +357,6 @@ def calculate_screen_images(FieldType, Wavelength, ExtentX, ExtentY, Resolution,
     
     print(f"Metadata saved: {metadata_path}")
 
-    # --- Return ---
-    rgb = F.get_colors()
-    # Ensure rgb is uint8 and C-contiguous for QImage
-    rgb_uint8 = (np.clip(rgb * 255, 0, 255)).astype(np.uint8)
-    if not rgb_uint8.flags['C_CONTIGUOUS']:
-        rgb_uint8 = np.ascontiguousarray(rgb_uint8)
-    # QImage expects shape (height, width, 3)
-    return rgb_uint8
+    # No explicit return needed: screen panel loads saved PNG/GIFs from output_dir
+    # and the aperture panel hides Solve in forward mode.
+    return None

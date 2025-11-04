@@ -5,28 +5,26 @@ FEAT - add fifth column (another value)
      - for screens first value is it range or single
      - for screens second value is two numbers: length, and interval between screens
 
-MISC - go over name change error tooltip
-     - possibly add an option to use relative distances instead of placement - Add moving arrows to elements
+MISC - ((far off dream: CUDA support))
+     - possibly add an option to use relative distances instead of placement - Add moving arrows to elements - shelfed for now
      - simulation should not run when aperture with empty path is present
-     - underflowing spinbox limit forces element to switch places .\bug.mkv
-     - add path option for sim_results folder
-     - localization . and , 
-     - clamp numberfield value to min/max instead of rejecting it
-     - light gray as bg
-     - apertures override each other - some finicky workaround is needed :(
-     - investigate aperture rotated 180deg
-     - test for renaming things with illegal chars and bad names (duplicate, empty, short, etc.)
-     - move imports and DEFAULT to top if possible
-     - maybe add a warning when importing older workspaces?
-     - warning when adding too many screens (steps) into a sim
+     - underflowing spinbox limit forces element to switch places .\bug.mkv - seems like only between same element types now
+     - add path option for sim_results folder, and custom ofd for aperture and load dialogs - currently cumbersome
+     - localization . and , - not a priority
+     - clamp numberfield value to min/max instead of rejecting it - not a priority
+     - light gray as bg - really not a priority
+     - apertures override each other - some finicky workaround is needed :( - only on fwd engines
+     - investigate aperture rotated 180deg, and add correct element scalings, mainly in bwd engines
+     - maybe add a warning when importing older workspaces? - definietly, also handle missing values, or just reject loading
+     - warning when adding too many screens (steps) into a sim - or big solves in rev engines
      - info when placing first element into a new engine - add reset warning to pref
-     - place it button should actually place the lement in the front, and check it as well
-     - opening preferences while solving will crash
-     - TODO: solver progress
-     - after a pref reset, some flags (SET_REATIN) doesnt get written, or read in correctly until a change in their value
+     - place it button should actually place the lement in the front, and check it as well - obsolete, engine doesnt support distances and lenses anyway
+     - TODO: solver progress for aperture solve too
+     - metadata month/minute bug: "Timestamp: 2025-38-04 17:38:38", "Timestamp: 2025-56-04 18:56:34"
+     - diff-bwd: should reshape image, or best fit to system extent ratio! otherwise crash
 
 AI Model experience:
-- GPT 4.1 (free model) adequate, can code with very strict and explicit instructions, good for smaller implementations, and finding functions hidden somewhere in the project. also doesnt eat into the budget
+- GPT 4.1 (free model) adequate, can code with very strict and explicit instructions, good for smaller implementations, and finding functions hidden somewhere in the project. also doesnt eat into the budget. Cannot work between multiple files, a helper class virtually doesnt exist to it
 - Sonnet 4.5 (paid) Limited usage, due to frequent slowdowns / loops. For every edit it goes aroud multiple times for a file, always forgetting newlines. Maybe Python language issue? Creates lots of files, tries to run cmd scripts, even if explicitly told not to.
 - GPT 5 (paid) Slow, sometimes takes really long, not too verbose with every step its doing. Usually manages to solve the query, doesnt generate infinite files. Just invisible (positive)
 

@@ -124,12 +124,7 @@ class ImageContainer(QWidget):
             return base_dir
 
     def solve_async(self):
-        try:
-            from components.preferences_window import getpref, SET_RETAIN_WORKING_FILES
-        except Exception:
-            def getpref(key, default=None):
-                return default
-            SET_RETAIN_WORKING_FILES = 'retain_working_files'
+        from components.preferences_window import getpref, Prefs
         if self._solve_in_progress:
             return
         try:
@@ -138,10 +133,19 @@ class ImageContainer(QWidget):
                 vis = getattr(tab, 'visualizer', None) if tab else None
                 elements = vis.export_elements_for_engine() if (vis and hasattr(vis, 'export_elements_for_engine')) else []
                 total = 0
+                # Robust EType-aware detection of Screen elements
+                try:
+                    from components.Element import EType as _EType
+                except Exception:
+                    _EType = None
                 for e in elements:
-                    et = getattr(e, 'element_type', None) or ""
-                    et_norm = str(et).replace(' ', '').lower()
-                    if et_norm == 'screen':
+                    et = getattr(e, 'element_type', None)
+                    is_screen = False
+                    if _EType is not None and et == _EType.SCREEN:
+                        is_screen = True
+                    elif isinstance(et, str) and et.strip().lower() == 'screen':
+                        is_screen = True
+                    if is_screen:
                         is_range = getattr(e, 'is_range', None)
                         steps = getattr(e, 'steps', None)
                         if is_range is None or steps is None:
@@ -159,7 +163,7 @@ class ImageContainer(QWidget):
                             total += 1
                 self._progress_total = int(total)
                 base_dir = self._screen_results_dir()
-                retain = bool(getpref(SET_RETAIN_WORKING_FILES, False))
+                retain = bool(getpref(Prefs.RETAIN_WORKING_FILES, False))
                 self._progress_retain = retain
                 if retain:
                     # At start, pick the most recent unix-time-named subfolder if any, else base_dir
@@ -190,12 +194,8 @@ class ImageContainer(QWidget):
         threading.Thread(target=self._fetch_image, daemon=True).start()
 
     def _progress_poll(self):
-        try:
-            from components.preferences_window import getpref, SET_RETAIN_WORKING_FILES
-        except Exception:
-            def getpref(key, default=None):
-                return default
-            SET_RETAIN_WORKING_FILES = 'retain_working_files'
+        
+        from components.preferences_window import getpref, Prefs
         retain = getattr(self, '_progress_retain', False)
         base_dir = self._screen_results_dir() if self._is_screen_panel() else None
         # Dynamically follow the most recent unix-time-named subfolder if retain is True
@@ -314,33 +314,54 @@ class ImageContainer(QWidget):
             side=side,
             workspace_name=tab.get_workspace_name() if tab else "Workspace_1",
         )
-        # Convert to QImage
-        image = QImage()
-        try:
-            arr = np.asarray(arr)
-        except Exception:
-            arr = None
-        if arr is not None and hasattr(arr, "ndim"):
-            if arr.ndim == 3 and arr.shape[2] == 3:
-                h = int(arr.shape[0]); w = int(arr.shape[1])
-                if arr.dtype != np.uint8:
-                    arr = (255 * np.clip(arr, 0, 1)).astype(np.uint8)
-                if not arr.flags["C_CONTIGUOUS"]:
-                    arr = np.ascontiguousarray(arr)
-                bytes_per_line = 3 * w
-                image = QImage(arr.data, w, h, bytes_per_line, QImage.Format.Format_RGB888)
-                self._last_image_array = arr
-            elif arr.ndim == 2:
-                h = int(arr.shape[0]); w = int(arr.shape[1])
-                if arr.dtype != np.uint8:
-                    arr = (255 * np.clip(arr, 0, 1)).astype(np.uint8)
-                if not arr.flags["C_CONTIGUOUS"]:
-                    arr = np.ascontiguousarray(arr)
-                bytes_per_line = w
-                image = QImage(arr.data, w, h, bytes_per_line, QImage.Format.Format_Grayscale8)
-                self._last_image_array = arr
-        pixmap = QPixmap.fromImage(image)
-        self._pixmap = pixmap
+        # After solve, handle result for aperture panel
+        if self._is_aperture_panel():
+            # If engine returns not None, treat as error and re-enable Solve
+            if arr is not None:
+                self.image_label.setText("Aperture solve failed. See console for details.")
+                self._progress_stop()
+                self._solve_in_progress = False
+                self._set_solve_enabled(True)
+                return
+            # Otherwise, reload the saved aperture image from the working folder
+            try:
+                # Find the output dir (same as engine)
+                from components.preferences_window import getpref, Prefs
+                retain = bool(getpref(Prefs.RETAIN_WORKING_FILES, True))
+                ws_name = tab.get_workspace_name() if tab else "Workspace_1"
+                base_dir = Path("simulation_results") / ws_name
+                if retain:
+                    # Use latest timestamped subdir if present
+                    subdirs = [d for d in base_dir.iterdir() if d.is_dir() and d.name.isdigit()]
+                    if subdirs:
+                        subdirs.sort(key=lambda d: d.stat().st_mtime, reverse=True)
+                        output_dir = subdirs[0]
+                    else:
+                        output_dir = base_dir
+                else:
+                    output_dir = base_dir
+                # Find the latest PNG in the output dir
+                pngs = sorted(output_dir.glob("*.png"), key=lambda p: p.stat().st_mtime, reverse=True)
+                if pngs:
+                    latest_png = pngs[0]
+                    pm = QPixmap(str(latest_png))
+                    if not pm.isNull():
+                        self._pixmap = pm
+                        self._clear_movie()
+                        self.update_image()
+                        self.image_label.setText("")
+                        self._progress_stop()
+                        self._solve_in_progress = False
+                        self._set_solve_enabled(True)
+                        return
+                # If not found, show error
+                self.image_label.setText("No aperture result image found.")
+            except Exception:
+                self.image_label.setText("Failed to load aperture result image.")
+            self._progress_stop()
+            self._solve_in_progress = False
+            self._set_solve_enabled(True)
+            return
         # After a solve, refresh screen image browsing list (if this is the screen panel)
         if self._is_screen_panel():
             try:
@@ -410,8 +431,8 @@ class ImageContainer(QWidget):
         # Determine target type for this panel
         target = None
         try:
-            from components.Element import TYPE_APERTURE as _TA, TYPE_SCREEN as _TS
-            target = _TA if self._is_aperture_panel() else (_TS if self._is_screen_panel() else None)
+            from components.Element import EType
+            target = EType.APERTURE if self._is_aperture_panel() else (EType.SCREEN if self._is_screen_panel() else None)
         except Exception:
             target = 'Aperture' if self._is_aperture_panel() else ('Screen' if self._is_screen_panel() else None)
         for e in elements or []:

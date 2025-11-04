@@ -2,16 +2,9 @@ from PyQt6.QtWidgets import QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QWidg
 from PyQt6.QtCore import Qt, QSettings, QEvent, QTimer, QRect
 from PyQt6.QtGui import QCursor, QIcon, QPixmap
 from typing import Optional, List
-from components.preferences_window import getpref
 from components.preferences_window import (
-    SET_ENABLE_SCROLLWHEEL,
-    SET_SELECT_ALL_ON_FOCUS,
-    SET_USE_RELATIVE_PATHS,
-    SET_RENAME_ON_TYPE_CHANGE,
-    SET_WARN_BEFORE_DELETE,
-    SET_ERR_MESS_DUR,
-    SET_DEFAULT_LENS_FOCUS_MM,
-    SET_DEFAULT_ELEMENT_OFFSET_MM
+    getpref,
+    Prefs
 )
 from components.helpers import (
     validate_name_against,
@@ -33,11 +26,7 @@ from components.Element import (
     Screen as _Screen,
     ApertureResult as _ApertureResult,
     TargetIntensity as _TargetIntensity,
-    TYPE_APERTURE,
-    TYPE_LENS,
-    TYPE_SCREEN,
-    TYPE_APERTURE_RESULT,
-    TYPE_TARGET_INTENSITY,
+    EType
 )
 
 GLOBAL_MINIMUM_DISTANCE_MM = 0
@@ -111,11 +100,11 @@ class PhysicalSetupVisualizer(QWidget):
         et = a1.type() if a1 is not None else None
         if et == QEvent.Type.Wheel:
             # Optionally disable scrollwheel for spinboxes and combos within the table
-            if not bool(getpref(SET_ENABLE_SCROLLWHEEL)):
+            if not bool(getpref(Prefs.ENABLE_SCROLLWHEEL)):
                 if isinstance(a0, (QDoubleSpinBox, QSpinBox, QComboBox)):
                     return True  # consume
         elif et == QEvent.Type.FocusIn:
-            if bool(getpref(SET_SELECT_ALL_ON_FOCUS)):
+            if bool(getpref(Prefs.SELECT_ALL_ON_FOCUS)):
                 if isinstance(a0, QLineEdit):
                     a0.selectAll()
                 elif isinstance(a0, (QDoubleSpinBox, QSpinBox)):
@@ -152,13 +141,13 @@ class PhysicalSetupVisualizer(QWidget):
         import os
         if not path:
             return path
-        return _to_pref_path_helper(path, bool(getpref(SET_USE_RELATIVE_PATHS)))
+        return _to_pref_path_helper(path, bool(getpref(Prefs.USE_RELATIVE_PATHS)))
 
     def _abs_path(self, path: Optional[str]) -> Optional[str]:
         return _abs_path_helper(path)
 
     def _normalize_aperture_display_path(self, stored_path: Optional[str]) -> str:
-        return _normalize_path_for_display(stored_path, bool(getpref(SET_USE_RELATIVE_PATHS)))
+        return _normalize_path_for_display(stored_path, bool(getpref(Prefs.USE_RELATIVE_PATHS)))
 
     def _find_row_for_node(self, target) -> Optional[int]:
         """Return table row index for a given element object, or None if not found."""
@@ -248,15 +237,15 @@ class PhysicalSetupVisualizer(QWidget):
             # Icon + Edit button
             icon_path = None
             t = getattr(elem, 'element_type', None)
-            if t == TYPE_APERTURE:
+            if t == EType.APERTURE:
                 icon_path = "resources/aperture-icon.png"
-            elif t == TYPE_LENS:
+            elif t == EType.LENS:
                 icon_path = "resources/lens-icon.png"
-            elif t == TYPE_SCREEN:
+            elif t == EType.SCREEN:
                 icon_path = "resources/screen-icon.png"
-            elif t == TYPE_APERTURE_RESULT:
+            elif t == EType.APERTURE_RESULT:
                 icon_path = "resources/aperture-result-icon.png"
-            elif t == TYPE_TARGET_INTENSITY:
+            elif t == EType.TARGET_INTENSITY:
                 icon_path = "resources/target-intensity-icon.png"
             icon_label = QLabel(self.table)
             if icon_path:
@@ -275,12 +264,12 @@ class PhysicalSetupVisualizer(QWidget):
             cell_widget.setContentsMargins(0, 0, 0, 0)
             self.table.setCellWidget(idx, 1, cell_widget)
             # Distance
-            if t == TYPE_SCREEN:
+            if t == EType.SCREEN:
                 self.table.setCellWidget(idx, 2, self._build_screen_distance_widget(elem))
             else:
                 self.table.setCellWidget(idx, 2, self._build_screen_distance_widget(elem))
             # Value per type
-            if t == TYPE_APERTURE:
+            if t == EType.APERTURE:
                 path_widget = QWidget(self.table)
                 path_layout = QHBoxLayout(path_widget)
                 path_layout.setContentsMargins(0, 0, 0, 0)
@@ -293,16 +282,16 @@ class PhysicalSetupVisualizer(QWidget):
                 path_layout.addWidget(path_edit)
                 path_layout.addWidget(browse_btn)
                 self.table.setCellWidget(idx, 3, path_widget)
-            elif t == TYPE_LENS:
+            elif t == EType.LENS:
                 f_spin = QDoubleSpinBox(self.table)
                 f_spin.installEventFilter(self)
                 f_spin.setRange(GLOBAL_MINIMUM_DISTANCE_MM, GLOBAL_MAXIMUM_DISTANCE_MM)
                 f_spin.setDecimals(2)
-                f_spin.setValue(float(getattr(elem, 'focal_length', float(getpref(SET_DEFAULT_LENS_FOCUS_MM, 1000.0)))))
+                f_spin.setValue(float(getattr(elem, 'focal_length', float(getpref(Prefs.DEFAULT_LENS_FOCUS_MM, 1000.0)))))
                 f_spin.setSuffix(" mm")
                 f_spin.editingFinished.connect(lambda e=elem, w=f_spin: self._on_focal_length_edited(e, w.value()))
                 self.table.setCellWidget(idx, 3, f_spin)
-            elif t == TYPE_SCREEN:
+            elif t == EType.SCREEN:
                 value_widget = QWidget(self.table)
                 vlayout = QHBoxLayout(value_widget)
                 vlayout.setContentsMargins(0, 0, 0, 0)
@@ -322,7 +311,7 @@ class PhysicalSetupVisualizer(QWidget):
                 vlayout.addWidget(steps_spin)
                 vlayout.addStretch()
                 self.table.setCellWidget(idx, 3, value_widget)
-            elif t == TYPE_APERTURE_RESULT:
+            elif t == EType.APERTURE_RESULT:
                 value_widget = QWidget(self.table)
                 vlayout = QHBoxLayout(value_widget)
                 vlayout.setContentsMargins(0, 0, 0, 0)
@@ -339,7 +328,7 @@ class PhysicalSetupVisualizer(QWidget):
                 vlayout.addWidget(place_btn)
                 vlayout.addStretch()
                 self.table.setCellWidget(idx, 3, value_widget)
-            elif t == TYPE_TARGET_INTENSITY:
+            elif t == EType.TARGET_INTENSITY:
                 path_widget = QWidget(self.table)
                 path_layout = QHBoxLayout(path_widget)
                 path_layout.setContentsMargins(0, 0, 0, 0)
@@ -376,7 +365,7 @@ class PhysicalSetupVisualizer(QWidget):
 
     def _show_temp_tooltip(self, widget: QWidget, text: str):
         try:
-            dur = int(getpref(SET_ERR_MESS_DUR, 3000))
+            dur = int(getpref(Prefs.ERR_MESS_DUR, 3000))
         except Exception:
             dur = 3000
         show_temp_tooltip(widget, text, dur)
@@ -387,7 +376,7 @@ class PhysicalSetupVisualizer(QWidget):
         # Ensure white.png exists in ./aperatures/
         aperture_dir = os.path.join(os.getcwd(), "aperatures")
         white_path = os.path.join(aperture_dir, "white.png")
-        if elem_type in (TYPE_APERTURE, TYPE_TARGET_INTENSITY):
+        if elem_type in (EType.APERTURE, EType.TARGET_INTENSITY):
             if not os.path.exists(aperture_dir):
                 os.makedirs(aperture_dir, exist_ok=True)
             if not os.path.exists(white_path):
@@ -406,26 +395,26 @@ class PhysicalSetupVisualizer(QWidget):
                 height_mm = float(sys_params.extension_y.value())
         except Exception:
             pass
-        default_distance = float(getpref(SET_DEFAULT_ELEMENT_OFFSET_MM, 10.0))
-        default_lens_focus = float(getpref(SET_DEFAULT_LENS_FOCUS_MM, 1000.0))
+        default_distance = float(getpref(Prefs.DEFAULT_ELEMENT_OFFSET_MM, 10.0))
+        default_lens_focus = float(getpref(Prefs.DEFAULT_LENS_FOCUS_MM, 1000.0))
         dist = last_distance + default_distance
         existing_names = [getattr(e, 'name', '') for e in self._elements]
-        if elem_type == TYPE_APERTURE:
-            name = generate_unique_default_name(TYPE_APERTURE, existing_names)
+        if elem_type == EType.APERTURE:
+            name = generate_unique_default_name(EType.APERTURE, existing_names)
             stored_path = self._to_pref_path(white_path)
             elem = _Aperture(distance=dist, image_path=stored_path, width_mm=width_mm, height_mm=height_mm, is_inverted=False, is_phasemask=False, name=name)
-        elif elem_type == TYPE_APERTURE_RESULT:
+        elif elem_type == EType.APERTURE_RESULT:
             name = generate_unique_default_name("Aperture Result", existing_names)
             elem = _ApertureResult(distance=dist, width_mm=width_mm, height_mm=height_mm, name=name)
-        elif elem_type == TYPE_LENS:
-            name = generate_unique_default_name(TYPE_LENS, existing_names)
+        elif elem_type == EType.LENS:
+            name = generate_unique_default_name(EType.LENS.value, existing_names)
             elem = _Lens(distance=dist, focal_length=default_lens_focus, name=name)
-        elif elem_type == TYPE_TARGET_INTENSITY:
+        elif elem_type == EType.TARGET_INTENSITY:
             name = generate_unique_default_name("Target Intensity", existing_names)
             stored_path = self._to_pref_path(white_path)
             elem = _TargetIntensity(distance=dist, image_path=stored_path, width_mm=width_mm, height_mm=height_mm, name=name)
         else:  # Screen
-            name = generate_unique_default_name(TYPE_SCREEN, existing_names)
+            name = generate_unique_default_name(EType.SCREEN.value, existing_names)
             elem = _Screen(distance=dist, is_range=False, range_end=dist, steps=10, name=name)
         self._elements.append(elem)
         self._stable_sort_by_distance()
@@ -565,7 +554,7 @@ class PhysicalSetupVisualizer(QWidget):
         valid_rows = [r for r in selected_rows if r > 0]
         if not valid_rows:
             return
-        if bool(getpref(SET_WARN_BEFORE_DELETE)):
+        if bool(getpref(Prefs.WARN_BEFORE_DELETE)):
             lines = [f"Element {r}: {getattr(self._elements[r-1], 'name', '')}" for r in valid_rows if 1 <= r <= len(self._elements)]
             msg = (
                 f"Are you sure you want to delete {len(lines)} element(s)?\n\n" + "\n".join(lines)
@@ -588,7 +577,7 @@ class PhysicalSetupVisualizer(QWidget):
     def _rewrite_aperture_paths_in_table(self):
         # Iterate rows and rewrite only Aperture/TargetIntensity path editors to reflect preference
         for row_index, elem in enumerate(self._elements, start=1):
-            if getattr(elem, 'element_type', None) in (TYPE_APERTURE, TYPE_TARGET_INTENSITY):
+            if getattr(elem, 'element_type', None) in (EType.APERTURE, EType.TARGET_INTENSITY):
                 cell = self.table.cellWidget(row_index, 3)
                 if cell is not None:
                     try:
@@ -641,20 +630,20 @@ class PhysicalSetupVisualizer(QWidget):
         # Returns (display_list, display->internal map, internal->display map)
         engine = (engine_text or "").strip()
         if engine == "Diffractsim Reverse":
-            display = ["Aperture Result", TYPE_LENS, "Target Intensity"]
+            display = ["Aperture Result", EType.LENS.value, "Target Intensity"]
             d2i = {
-                "Aperture Result": TYPE_APERTURE_RESULT,
-                TYPE_LENS: TYPE_LENS,
-                "Target Intensity": TYPE_TARGET_INTENSITY,
+                "Aperture Result": EType.APERTURE_RESULT.value,
+                EType.LENS.value: EType.LENS.value,
+                "Target Intensity": EType.TARGET_INTENSITY.value,
             }
         elif engine == "Bitmap Reverse":
             display = ["Aperture Result", "Target Intensity"]
             d2i = {
-                "Aperture Result": TYPE_APERTURE_RESULT,
-                "Target Intensity": TYPE_TARGET_INTENSITY,
+                "Aperture Result": EType.APERTURE_RESULT.value,
+                "Target Intensity": EType.TARGET_INTENSITY.value,
             }
         else:  # Diffractsim Forward
-            display = [TYPE_APERTURE, TYPE_LENS, TYPE_SCREEN]
+            display = [EType.APERTURE.value, EType.LENS.value, EType.SCREEN.value]
             d2i = {x: x for x in display}
         i2d = {}
         for d, i in d2i.items():
@@ -714,15 +703,15 @@ class ElementEditDialog(QDialog):
         layout.addRow("Name", name_edit)
         self.widgets['name'] = name_edit
         # Friendly type label
-        t_internal = str(getattr(elem, 'element_type', '') or '')
+        t_internal = getattr(elem, 'element_type', '')
         friendly_map = {
-            TYPE_APERTURE: "Aperture",
-            TYPE_LENS: "Lens",
-            TYPE_SCREEN: "Screen",
-            TYPE_APERTURE_RESULT: "Aperture Result",
-            TYPE_TARGET_INTENSITY: "Target Intensity",
+            EType.APERTURE.value: "Aperture",
+            EType.LENS.value: "Lens",
+            EType.SCREEN.value: "Screen",
+            EType.APERTURE_RESULT.value: "Aperture Result",
+            EType.TARGET_INTENSITY.value: "Target Intensity",
         }
-        type_label = QLabel(friendly_map.get(t_internal, t_internal))
+        type_label = QLabel(friendly_map.get(t_internal, str(t_internal)))
         layout.addRow("Type", type_label)
         # Distance
         dist_spin = QDoubleSpinBox()
@@ -734,7 +723,7 @@ class ElementEditDialog(QDialog):
         self.widgets['distance'] = dist_spin
         # Type-specific fields
         t = getattr(elem, 'element_type', None)
-        if t == TYPE_LENS:
+        if t == EType.LENS:
             f_spin = QDoubleSpinBox()
             f_spin.setRange(GLOBAL_MINIMUM_DISTANCE_MM, GLOBAL_MAXIMUM_DISTANCE_MM)
             f_spin.setDecimals(2)
@@ -742,7 +731,7 @@ class ElementEditDialog(QDialog):
             f_spin.setSuffix(" mm")
             layout.addRow("Focal length", f_spin)
             self.widgets['focal_length'] = f_spin
-        if t == TYPE_APERTURE:
+        if t == EType.APERTURE:
             inverted_cb = QCheckBox("Inverted")
             inverted_cb.setChecked(bool(getattr(elem, 'is_inverted', False)))
             layout.addRow(inverted_cb)
@@ -751,11 +740,26 @@ class ElementEditDialog(QDialog):
             phasemask_cb.setChecked(bool(getattr(elem, 'is_phasemask', False)))
             layout.addRow(phasemask_cb)
             self.widgets['is_phasemask'] = phasemask_cb
-        if t in (TYPE_APERTURE, TYPE_TARGET_INTENSITY):
+        if t in (EType.APERTURE, EType.APERTURE_RESULT):
+            width_spin = QDoubleSpinBox()
+            width_spin.setRange(0.01, GLOBAL_MAXIMUM_DISTANCE_MM)
+            width_spin.setDecimals(3)
+            width_spin.setValue(float(getattr(elem, 'width_mm', 1.0)))
+            width_spin.setSuffix(" mm")
+            layout.addRow("Width", width_spin)
+            self.widgets['width_mm'] = width_spin
+            height_spin = QDoubleSpinBox()
+            height_spin.setRange(0.01, GLOBAL_MAXIMUM_DISTANCE_MM)
+            height_spin.setDecimals(3)
+            height_spin.setValue(float(getattr(elem, 'height_mm', 1.0)))
+            height_spin.setSuffix(" mm")
+            layout.addRow("Height", height_spin)
+            self.widgets['height_mm'] = height_spin
+        if t in (EType.APERTURE, EType.TARGET_INTENSITY):
             path_edit = QLineEdit(getattr(elem, 'image_path', ''))
             layout.addRow("Image Path", path_edit)
             self.widgets['image_path'] = path_edit
-        if t == TYPE_SCREEN:
+        if t == EType.SCREEN:
             is_range = QCheckBox("Range of screens")
             is_range.setChecked(bool(getattr(elem, 'is_range', False)))
             layout.addRow(is_range)
@@ -772,6 +776,53 @@ class ElementEditDialog(QDialog):
             steps.setValue(int(getattr(elem, 'steps', 10)))
             layout.addRow("Steps", steps)
             self.widgets['steps'] = steps
+            # Disable range_end and steps if not a range
+            is_range_state = is_range.isChecked()
+            range_end.setEnabled(is_range_state)
+            steps.setEnabled(is_range_state)
+            def _toggle_range_widgets(checked):
+                range_end.setEnabled(checked)
+                steps.setEnabled(checked)
+            is_range.toggled.connect(_toggle_range_widgets)
+        if t == EType.APERTURE_RESULT:
+            # Width/Height already handled above
+            # Maxiter
+            maxiter_spin = QSpinBox()
+            maxiter_spin.setRange(1, 100000)
+            maxiter_spin.setValue(int(getattr(elem, 'maxiter', 100)))
+            layout.addRow("Max iterations", maxiter_spin)
+            self.widgets['maxiter'] = maxiter_spin
+            # Padding
+            padding_spin = QSpinBox()
+            padding_spin.setRange(0, 10000)
+            padding_spin.setValue(int(getattr(elem, 'padding', 0)))
+            layout.addRow("Padding", padding_spin)
+            self.widgets['padding'] = padding_spin
+            # Phase retrieval method
+            method_combo = QComboBox()
+            from components.Element import PRMethods
+            for m in PRMethods:
+                method_combo.addItem(m.value, m)
+            current_method = getattr(elem, 'method', PRMethods.C_GRAD)
+            idx = [m for m in PRMethods].index(current_method) if current_method in PRMethods else 0
+            method_combo.setCurrentIndex(idx)
+            layout.addRow("Phase retrieval method", method_combo)
+            self.widgets['method'] = method_combo
+        if t == EType.TARGET_INTENSITY:
+            width_spin = QDoubleSpinBox()
+            width_spin.setRange(0.01, GLOBAL_MAXIMUM_DISTANCE_MM)
+            width_spin.setDecimals(3)
+            width_spin.setValue(float(getattr(elem, 'width_mm', 1.0)))
+            width_spin.setSuffix(" mm")
+            layout.addRow("Width", width_spin)
+            self.widgets['width_mm'] = width_spin
+            height_spin = QDoubleSpinBox()
+            height_spin.setRange(0.01, GLOBAL_MAXIMUM_DISTANCE_MM)
+            height_spin.setDecimals(3)
+            height_spin.setValue(float(getattr(elem, 'height_mm', 1.0)))
+            height_spin.setSuffix(" mm")
+            layout.addRow("Height", height_spin)
+            self.widgets['height_mm'] = height_spin
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
@@ -801,3 +852,13 @@ class ElementEditDialog(QDialog):
             self.elem.range_end = re_val
         if 'steps' in w and hasattr(self.elem, 'steps'):
             self.elem.steps = max(1, int(w['steps'].value()))
+        if 'width_mm' in w and hasattr(self.elem, 'width_mm'):
+            self.elem.width_mm = float(w['width_mm'].value())
+        if 'height_mm' in w and hasattr(self.elem, 'height_mm'):
+            self.elem.height_mm = float(w['height_mm'].value())
+        if 'maxiter' in w and hasattr(self.elem, 'maxiter'):
+            self.elem.maxiter = int(w['maxiter'].value())
+        if 'padding' in w and hasattr(self.elem, 'padding'):
+            self.elem.padding = int(w['padding'].value())
+        if 'method' in w and hasattr(self.elem, 'method'):
+            self.elem.method = w['method'].currentData()

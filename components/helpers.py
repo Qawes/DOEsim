@@ -7,11 +7,91 @@ from typing import Iterable, Optional
 from PyQt6.QtWidgets import QWidget, QApplication, QToolTip, QLineEdit, QDoubleSpinBox, QCheckBox, QComboBox, QSpinBox
 from PyQt6.QtCore import QRect
 from PyQt6.QtGui import QCursor
+from pathlib import Path
+
+# Used:
+def ensure_white_image(size: Optional[int] = 256) -> str:
+    """Ensure a default white image exists and return its absolute path."""
+    if size is None or size <= 0:
+        size = 256
+    try:
+        ap_dir = os.path.join(os.getcwd(), "aperatures")
+        os.makedirs(ap_dir, exist_ok=True)
+        white_path = os.path.join(ap_dir, "white.png")
+        if not os.path.exists(white_path):
+            try:
+                from PIL import Image as _PILImage
+                img = _PILImage.new("L", (size, size), 255)
+                img.save(white_path)
+                print("Created default white image at:", white_path)
+            except Exception:
+                print("Warning: cannot create default white image.")
+                pass
+        return white_path
+    except Exception:
+        print("Warning: cannot ensure default white image.")
+        return ""
+    
+def check_image_path(path: str) -> str:
+    """Check if image path exists; if not, return default white image path."""
+    abs_path = os.path.abspath(path) if path else None
+    if abs_path and os.path.exists(abs_path):
+        return abs_path
+    print(f"Warning: No image found in'{path}'. Using default white image.")
+    return ensure_white_image()
+
+def set_working_dir(workspace_name: str, retain: bool = True) -> Path:
+    """
+    Determines and prepares the output directory for simulation results based on workspace name and retention preference.
+    If retain is True, creates a timestamped subfolder. If False, uses the workspace folder and deletes previous Screen_*.png/gif files.
+    Returns the Path to the output directory (guaranteed to exist).
+    """
+    import time
+    # Ensure "simulation_results" folder exists
+    sim_results_dir = Path("simulation_results")
+    sim_results_dir.mkdir(parents=True, exist_ok=True)
+    base_dir = sim_results_dir / workspace_name
+    if retain:
+        ts = int(time.time())
+        output_dir = base_dir / str(ts)
+    else:
+        output_dir = base_dir
+        # Delete previous Screen_*.png and Screen_*.gif files
+        try:
+            if output_dir.exists():
+                for p in list(output_dir.glob("*.png")) + list(output_dir.glob("*.gif")):
+                    try:
+                        p.unlink()
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+    output_dir.mkdir(parents=True, exist_ok=True)
+    return output_dir
+
+def check_writeable_folder(path: str | os.PathLike) -> str | None:
+    """
+    Check if the given folder path exists and is writeable.
+    Returns the absolute path if writeable, else None.
+    """
+    if not path:
+        return None
+    abs_path = os.path.abspath(os.fspath(path))
+    try:
+        if not os.path.isdir(abs_path):
+            return None
+        test_file = os.path.join(abs_path, ".write_test_tmp")
+        with open(test_file, "w") as f:
+            f.write("test")
+        os.remove(test_file)
+        return abs_path
+    except Exception:
+        return None
 
 # --- Naming helpers ---
 DEFAULT_ALLOWED_NAME_PATTERN = r'^[a-zA-Z0-9_ -]+$'
 
-
+#TODO: please use these in place of duplicated code elsewhere
 def is_valid_name(name: str, min_len: int = 3, pattern: str = DEFAULT_ALLOWED_NAME_PATTERN):
     """Validate a display name against length and allowed characters.
     Returns True if valid, or an error message string if invalid.
@@ -128,7 +208,7 @@ def name_exists(name: str, existing: Iterable[str]) -> bool:
 
 
 # --- Slug helpers for filenames ---
-
+# TODO: please use this instead of implementing 600 different versions
 def slugify(nm: Optional[str]) -> str:
     s = (nm or "screen").strip()
     if not s:
@@ -159,7 +239,7 @@ def show_temp_tooltip(widget: QWidget, text: str, duration_ms: int = 3000):
 
 
 # --- Path helpers ---
-
+#TODO: unused?
 def abs_path(path: Optional[str]) -> Optional[str]:
     if not path:
         return path
@@ -168,7 +248,7 @@ def abs_path(path: Optional[str]) -> Optional[str]:
     except Exception:
         return path
 
-
+# TODO: unused?
 def to_pref_path(path: str, use_relative: bool) -> str:
     if not path:
         return path
@@ -179,7 +259,7 @@ def to_pref_path(path: str, use_relative: bool) -> str:
             return path
     return path
 
-
+# TODO: unused?
 def normalize_path_for_display(stored_path: Optional[str], use_relative: bool) -> str:
     ap = abs_path(stored_path)
     if not ap:
@@ -189,6 +269,7 @@ def normalize_path_for_display(stored_path: Optional[str], use_relative: bool) -
 
 # --- Formatting ---
 
+# TODO: whats this
 def fmt_fixed(v: float, decimals: int = 2) -> str:
     try:
         return f"{float(v):.{int(decimals)}f}"
@@ -319,7 +400,7 @@ def set_name(table, row: int, new_name: str):
     except Exception:
         pass
 
-
+# TODO: instead of lots of independent set_X, use a set_properties 
 def set_distance(table, row: int, new_dist: float):
     w = table.cellWidget(row, 2)
     # If it's a single QDoubleSpinBox
@@ -472,7 +553,7 @@ def step_distance(table, row: int, target: float):
     if isinstance(spin, QDoubleSpinBox):
         step_spin_to_value(spin, target)
 
-
+# TODO: use this in tests?
 def select_row_and_wait(table, row: int, timeout_ms: int = 1000) -> bool:
     try:
         table.clearSelection()
@@ -489,7 +570,7 @@ def select_row_and_wait(table, row: int, timeout_ms: int = 1000) -> bool:
     except Exception:
         return False
 
-
+# TODO: update  for robust type getting, test3 fails due to this?
 def get_row_types(table) -> list[str]:
     types: list[str] = []
     for r in range(1, getattr(table, 'rowCount')()):
@@ -499,6 +580,7 @@ def get_row_types(table) -> list[str]:
     return types
 
 
+# TODO: update  for robust type getting, test9 fails due to this?
 def get_row_names(table):  # type: ignore
     """Return a list of element names (from column 0, QLineEdit, for rows 1+)."""
     names = []

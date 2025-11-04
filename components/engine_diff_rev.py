@@ -7,47 +7,24 @@ so UI features (saving PNG/GIF, metadata, progress) continue to work.
 You can replace the internals later with true reverse propagation.
 """
 from __future__ import annotations
-
 from typing import Any
-
-# Delegate to forward engine to preserve behavior and file outputs
+from os import path
 from . import engine_diff_fwd as _fwd
-# Build mapped Element.py instances
-try:
-    from .Element import Aperture as _Aperture, Screen as _Screen, TYPE_APERTURE_RESULT as _TYPE_AR, TYPE_TARGET_INTENSITY as _TYPE_TI
-except Exception:
-    _Aperture = None
-    _Screen = None
-    _TYPE_AR = 'ApertureResult'
-    _TYPE_TI = 'TargetIntensity'
-
-#This will get deleted prob
-def _map_reverse_elements_to_forward(elements: list[object]) -> list[object]:
-    mapped: list[object] = []
-    for e in elements or []:
-        et = getattr(e, 'element_type', None)
-        et_norm = str(et).replace(' ', '').lower() if et is not None else None
-        name = getattr(e, 'name', None)
-        dist = float(getattr(e, 'distance', 0.0))
-        # Image parameters, when present
-        p = getattr(e, 'params', {}) or {}
-        img = getattr(e, 'image_path', None) or p.get('image_path')
-        wmm = getattr(e, 'width_mm', None) or p.get('width_mm')
-        hmm = getattr(e, 'height_mm', None) or p.get('height_mm')
-        if et_norm in ('apertureresult',) or et in (_TYPE_AR, 'ApertureResult'):
-            if _Screen is not None:
-                mapped.append(_Screen(distance=dist, is_range=False, range_end=dist, steps=1, name=name))
-            else:
-                mapped.append(e)
-        elif et_norm in ('targetintensity',) or et in (_TYPE_TI, 'TargetIntensity'):
-            if _Aperture is not None:
-                mapped.append(_Aperture(distance=dist, image_path=img or '', width_mm=float(wmm or 1.0), height_mm=float(hmm or 1.0), name=name))
-            else:
-                mapped.append(e)
-        else:
-            mapped.append(e)
-    return mapped
-
+import diffractsim, numpy as np
+from diffractsim import MonochromaticField, FourierPhaseRetrieval, ApertureFromImage, Lens, mm, nm, cm
+from components.Element import (
+    Element,
+    EType,
+    ElementParamKey,
+)
+from components.helpers import (
+    ensure_dirs,
+    check_image_path,
+    ensure_white_image,
+    set_working_dir,
+    check_writeable_folder,
+)
+from components.preferences_window import getpref, Prefs
 
 def calculate_screen_images(
     FieldType: Any,
@@ -60,20 +37,53 @@ def calculate_screen_images(
     side: str | None = None,
     workspace_name: str = "Workspace_1",
 ):
-    """Reverse engine entrypoint.
-    Currently calls the forward engine to produce outputs with the same
-    file layout expected by the UI. Replace this with a true reverse
-    diffraction computation when available.
-    """
-    mapped = _map_reverse_elements_to_forward(Elements)
-    return _fwd.calculate_screen_images(
-        FieldType=FieldType,
-        Wavelength=Wavelength,
-        ExtentX=ExtentX,
-        ExtentY=ExtentY,
-        Resolution=Resolution,
-        Elements=mapped,
-        Backend=Backend,
-        side=side,
-        workspace_name=workspace_name,
+    diffractsim.set_backend(Backend)
+    height = int(ExtentY * Resolution)
+    width = int(ExtentX * Resolution)
+    F = MonochromaticField(
+        wavelength=Wavelength * nm, extent_x=ExtentX * mm, extent_y=ExtentY * mm, Nx=width, Ny=height
     )
+
+    implemented_methods = ('Gerchberg-Saxton', 'Conjugate-Gradient') # diffractsim provided implementations
+
+    maxiter = 1
+    method = ""
+    targetpath = None
+    resultpath = None
+    workdir = set_working_dir(workspace_name, getpref(Prefs.RETAIN_WORKING_FILES, True))
+    sorted_elements = sorted(Elements, key=lambda e: e.distance)
+    for e in sorted_elements:
+        params = e.params_dict()
+        if e.element_type == EType.APERTURE_RESULT and resultpath is None:
+            resultpath = check_writeable_folder(workdir)
+            resultpath = f"{resultpath}\\{e.name}.png"
+            if resultpath is None:
+                print("Aperture Result path is not writeable.")
+                return np.zeros((height, width, 3), dtype=np.uint8)
+            maxiter = params[ElementParamKey.MAXITER.value]
+            method = params[ElementParamKey.PR_METHOD.value]
+
+        if e.element_type == EType.TARGET_INTENSITY and targetpath is None:
+            targetpath = params.get(ElementParamKey.IMAGE_PATH, None)
+            targetpath = check_image_path(targetpath)
+            if targetpath is None:
+                return np.zeros((height, width, 3), dtype=np.uint8)
+
+    PR = FourierPhaseRetrieval(target_amplitude_path=targetpath, new_size=(width, height), pad = (0,0))
+    PR.retrieve_phase_mask(max_iter= maxiter, method=method)
+    PR.save_retrieved_phase_as_image(resultpath)
+
+    return None
+
+
+"""
+if not Path(phasepath).exists():
+        PR = FourierPhaseRetrieval(target_amplitude_path = f"./apertures/{target_image}.{target_im_ext}",
+          new_size= (prsizex,prsizex))#,
+            pad = (padx, padx)
+            )
+        PR.retrieve_phase_mask(max_iter = iters, method = 'Conjugate-Gradient')
+        PR.save_retrieved_phase_as_image(phasepath)
+        print(f" --- Saved {prsizex} x {prsizex} image to {phasepath}")
+        del PR
+"""

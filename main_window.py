@@ -4,16 +4,12 @@ from PyQt6.QtGui import QIcon, QDesktopServices
 from components.system_parameters import SystemParametersWidget
 from components.element_table import PhysicalSetupVisualizer
 from components.preview_display import ImageContainer
-from components.preferences_window import PreferencesWindow, getpref
-from components.preferences_window import (
-    SET_DEFAULT_ELEMENT_OFFSET_MM,
-    SET_CONFIRM_ON_SAVE,
-    SET_ASK_BEFORE_CLOSING,
-    SET_AUTO_OPEN_NEW_WORKSPACE,
-    SET_OPEN_TAB_ON_STARTUP,
-)
+from components.preferences_window import PreferencesWindow, getpref, Prefs
 from components.helpers import validate_name_against, suggest_unique_name
-from components.Element import Element as _ElBase, TYPE_APERTURE, TYPE_LENS, TYPE_SCREEN, TYPE_APERTURE_RESULT, TYPE_TARGET_INTENSITY
+from components.Element import (
+    Element as _ElBase,
+    EType
+)
 
 # ---------- Default UI layout (edit these to change the initial appearance) ----------
 DEFAULT_WINDOW_GEOMETRY = (350, 100, 1200, 800)  # x, y, width, height
@@ -21,7 +17,7 @@ DEFAULT_SPLITTER_V_SIZES = [400, 600]            # top/bottom heights (px)
 DEFAULT_SPLITTER_H_SIZES = [600, 600]            # left/right widths (px)
 DEFAULT_TABLE_COLUMN_PROPORTIONS = [0.2, 0.2, 0.2, 0.4]  # Name, Type, Distance, Value
 # ------------------------------------------------------------------------------------
-VERSION = "0.1.1" # Application version string
+VERSION = "0.1.2.element-refacotr" # Application version string
 # ------------------------------------------------------------------------------------
 
 class WorkspaceTab(QWidget):
@@ -126,7 +122,7 @@ class MainWindow(QMainWindow):
         # Restore window geometry first
         self._restore_window_geometry()
         # Conditionally open an empty workspace tab on startup
-        if self._force_single_workspace or bool(getpref(SET_OPEN_TAB_ON_STARTUP)):
+        if self._force_single_workspace or bool(getpref(Prefs.OPEN_TAB_ON_STARTUP)):
             if self.tabs.count() == 0:
                 self.add_new_tab()
         # elif bool(getpref(SET_AUTO_OPEN_NEW_WORKSPACE)):
@@ -182,32 +178,20 @@ class MainWindow(QMainWindow):
             items = visualizer.get_ui_elements() if hasattr(visualizer, 'get_ui_elements') else []
             elements = []
             for e in items:
-                entry = {
-                    'name': getattr(e, 'name', None),
-                    'type': getattr(e, 'element_type', None),
-                    'distance': float(getattr(e, 'distance', 0.0)),
-                }
-                t = getattr(e, 'element_type', None)
-                if t == TYPE_LENS:
-                    entry['focal_length'] = float(getattr(e, 'focal_length', 0.0) or 0.0)
-                elif t == TYPE_APERTURE:
-                    entry['image_path'] = getattr(e, 'image_path', '') or ''
-                    entry['width_mm'] = float(getattr(e, 'width_mm', 1.0) or 1.0)
-                    entry['height_mm'] = float(getattr(e, 'height_mm', 1.0) or 1.0)
-                    entry['is_inverted'] = bool(getattr(e, 'is_inverted', False))
-                    entry['is_phasemask'] = bool(getattr(e, 'is_phasemask', False))
-                elif t == TYPE_SCREEN:
-                    entry['is_range'] = bool(getattr(e, 'is_range', False))
-                    entry['range_end'] = float(getattr(e, 'range_end', getattr(e, 'distance', 0.0)))
-                    entry['steps'] = int(getattr(e, 'steps', 10))
-                elif t == TYPE_APERTURE_RESULT:
-                    entry['width_mm'] = float(getattr(e, 'width_mm', 1.0) or 1.0)
-                    entry['height_mm'] = float(getattr(e, 'height_mm', 1.0) or 1.0)
-                elif t == TYPE_TARGET_INTENSITY:
-                    entry['image_path'] = getattr(e, 'image_path', '') or ''
-                    entry['width_mm'] = float(getattr(e, 'width_mm', 1.0) or 1.0)
-                    entry['height_mm'] = float(getattr(e, 'height_mm', 1.0) or 1.0)
-                elements.append(entry)
+                try:
+                    # Use each element's export to ensure all per-type fields are saved
+                    if hasattr(e, 'export') and callable(getattr(e, 'export')):
+                        elements.append(e.export())
+                    else:
+                        # Fallback minimal serialization
+                        elements.append({
+                            'name': getattr(e, 'name', None),
+                            'type': getattr(e, 'element_type', None),
+                            'distance': float(getattr(e, 'distance', 0.0)),
+                        })
+                except Exception:
+                    # Skip elements that fail to serialize
+                    continue
 
             data = {
                 'workspace_name': workspace_name,
@@ -232,7 +216,7 @@ class MainWindow(QMainWindow):
             with open(file_path, 'w', encoding='utf-8') as f:
                 json.dump(data, f, indent=2, ensure_ascii=False)
 
-            if bool(getpref(SET_CONFIRM_ON_SAVE)):
+            if bool(getpref(Prefs.CONFIRM_ON_SAVE)):
                 QMessageBox.information(self, "Save Workspace", f"Workspace saved to:\n{file_path}")
         except Exception as e:
             QMessageBox.critical(self, "Save Workspace", f"Failed to save workspace:\n{e}")
@@ -243,6 +227,7 @@ class MainWindow(QMainWindow):
             import json
             import os
             from components.Element import Element as _ElementFactory
+            from components.Element import EType as _EType
             # Pick file
             default_dir = os.path.join(os.getcwd(), 'workspaces')
             os.makedirs(default_dir, exist_ok=True)
@@ -309,12 +294,24 @@ class MainWindow(QMainWindow):
             elems: list[_ElBase] = []
             for e in data.get('elements', []):
                 try:
+                    # Normalize type labels across all known values and legacy aliases
                     t = e.get('type')
-                    # Normalize reverse labels with spaces
-                    if t == 'Aperture Result':
-                        e['type'] = TYPE_APERTURE_RESULT
-                    elif t == 'Target Intensity':
-                        e['type'] = TYPE_TARGET_INTENSITY
+                    t_str = str(t).strip() if t is not None else ''
+                    norm_map = {
+                        'aperture': _EType.APERTURE.value,
+                        'lens': _EType.LENS.value,
+                        'screen': _EType.SCREEN.value,
+                        'aperture result': _EType.APERTURE_RESULT.value,
+                        'apertureresult': _EType.APERTURE_RESULT.value,
+                        'aperture_result': _EType.APERTURE_RESULT.value,
+                        'target intensity': _EType.TARGET_INTENSITY.value,
+                        'targetintensity': _EType.TARGET_INTENSITY.value,
+                        'target_intensity': _EType.TARGET_INTENSITY.value,
+                    }
+                    key = t_str.replace('-', ' ').replace('/', ' ').replace('\t', ' ').replace('\n', ' ').strip().lower()
+                    if key in norm_map:
+                        e['type'] = norm_map[key]
+
                     # Support legacy keys
                     if 'aperture_path' in e and 'image_path' not in e:
                         e['image_path'] = e.get('aperture_path')
@@ -331,6 +328,14 @@ class MainWindow(QMainWindow):
                         e['is_inverted'] = bool(e.get('inverted'))
                     if 'phasemask' in e and 'is_phasemask' not in e:
                         e['is_phasemask'] = bool(e.get('phasemask'))
+                    # ApertureResult reverse extras (legacy)
+                    if 'max_iter' in e and 'maxiter' not in e:
+                        e['maxiter'] = e.get('max_iter')
+                    if 'padding_px' in e and 'padding' not in e:
+                        e['padding'] = e.get('padding_px')
+                    if 'method' in e and 'phase_retrieval_method' not in e:
+                        e['phase_retrieval_method'] = e.get('method')
+
                     # Ensure distance key exists
                     if 'distance' not in e and 'distance_mm' in e:
                         e['distance'] = e.get('distance_mm')
@@ -363,8 +368,8 @@ class MainWindow(QMainWindow):
     
     def close_tab(self, index):
         """Close a tab with confirmation if it's the last tab"""
-        ask = bool(getpref(SET_ASK_BEFORE_CLOSING))
-        autoopen = bool(getpref(SET_AUTO_OPEN_NEW_WORKSPACE))
+        ask = bool(getpref(Prefs.ASK_BEFORE_CLOSING))
+        autoopen = bool(getpref(Prefs.AUTO_OPEN_NEW_WORKSPACE))
         if self.tabs.count() <= 1:
             proceed = True
             if ask:
@@ -391,7 +396,7 @@ class MainWindow(QMainWindow):
                 except Exception:
                     pass
                 self.tabs.removeTab(index)
-                if bool(getpref(SET_AUTO_OPEN_NEW_WORKSPACE)):
+                if bool(getpref(Prefs.AUTO_OPEN_NEW_WORKSPACE)):
                     self.add_new_tab()
                 self._update_empty_placeholder()
         else:
