@@ -280,11 +280,11 @@ class Screen(Element):
 class ApertureResult(Element):
     width_mm: float = 1.0
     height_mm: float = 1.0
-    maxiter: int = 100
+    maxiter: int = 200
     padding: int = 0
     method: PRMethods = PRMethods.C_GRAD
 
-    def __init__(self, distance: float = 0.0, width_mm: float = 1.0, height_mm: float = 1.0, maxiter: int = 100, padding: int = 0, method = PRMethods.C_GRAD, name: str | None = None):
+    def __init__(self, distance: float = 0.0, width_mm: float = 1.0, height_mm: float = 1.0, maxiter: int = 200, padding: int = 0, method = PRMethods.C_GRAD, name: str | None = None):
         super().__init__(EType.APERTURE_RESULT, float(distance), name)
         self.width_mm = float(width_mm)
         self.height_mm = float(height_mm)

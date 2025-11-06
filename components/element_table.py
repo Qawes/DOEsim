@@ -238,15 +238,15 @@ class PhysicalSetupVisualizer(QWidget):
             icon_path = None
             t = getattr(elem, 'element_type', None)
             if t == EType.APERTURE:
-                icon_path = "resources/aperture-icon.png"
+                icon_path = "_internal/resources/aperture-icon.png"
             elif t == EType.LENS:
-                icon_path = "resources/lens-icon.png"
+                icon_path = "_internal/resources/lens-icon.png"
             elif t == EType.SCREEN:
-                icon_path = "resources/screen-icon.png"
+                icon_path = "_internal/resources/screen-icon.png"
             elif t == EType.APERTURE_RESULT:
-                icon_path = "resources/aperture-result-icon.png"
+                icon_path = "_internal/resources/aperture-result-icon.png"
             elif t == EType.TARGET_INTENSITY:
-                icon_path = "resources/target-intensity-icon.png"
+                icon_path = "_internal/resources/target-intensity-icon.png"
             icon_label = QLabel(self.table)
             if icon_path:
                 icon = QIcon(icon_path)
@@ -696,6 +696,11 @@ class ElementEditDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle(f"Edit Element: {getattr(elem, 'name', '')}")
         self.elem = elem
+        # Track initial inversion state to detect newly enabled inversion
+        try:
+            self._initial_is_inverted = bool(getattr(elem, 'is_inverted', False))
+        except Exception:
+            self._initial_is_inverted = False
         layout = QFormLayout(self)
         self.widgets = {}
         from PyQt6.QtWidgets import QLineEdit, QDoubleSpinBox, QSpinBox, QCheckBox, QLabel
@@ -839,8 +844,124 @@ class ElementEditDialog(QDialog):
             self.elem.focal_length = float(w['focal_length'].value())
         if 'image_path' in w and hasattr(self.elem, 'image_path'):
             self.elem.image_path = w['image_path'].text()
+        # Handle inversion (create inverted asset when turned on)
+        new_is_inverted = None
         if 'is_inverted' in w and hasattr(self.elem, 'is_inverted'):
-            self.elem.is_inverted = bool(w['is_inverted'].isChecked())
+            new_is_inverted = bool(w['is_inverted'].isChecked())
+            self.elem.is_inverted = new_is_inverted
+        inv_default = None
+        if new_is_inverted is True:
+            # Only attempt to create an inverted file when checkbox is enabled
+            try:
+                from pathlib import Path as _Path
+                from PIL import Image as _Image, ImageOps as _ImageOps
+                # Resolve absolute source path from stored preference path
+                try:
+                    src_path_str = _abs_path_helper(getattr(self.elem, 'image_path', ''))
+                except Exception:
+                    src_path_str = getattr(self.elem, 'image_path', '')
+                if src_path_str:
+                    src_path = _Path(src_path_str)
+                else:
+                    src_path = None
+                if src_path is not None and src_path.exists() and src_path.is_file():
+                    stem = src_path.stem
+                    ext = src_path.suffix or ".png"
+                    parent = src_path.parent
+                    # Candidate inverted filenames to check for existing artifacts
+                    inv_default = parent / f"{stem}_INV{ext}"
+                    inv_bw_first = parent / f"{stem}_BW_INV{ext}"
+                    inv_bw_last = parent / f"{stem}_INV_BW{ext}"
+                    # If any inverted version exists, do nothing
+                    if not (inv_default.exists() or inv_bw_first.exists() or inv_bw_last.exists()):
+                        try:
+                            img = _Image.open(src_path)
+                            # Preserve alpha if present: invert color channels only
+                            if img.mode in ("RGBA", "LA") or (img.mode == "P" and 'transparency' in img.info):
+                                rgba = img.convert("RGBA")
+                                r, g, b, a = rgba.split()
+                                rgb = _Image.merge("RGB", (r, g, b))
+                                inv_rgb = _ImageOps.invert(rgb)
+                                r2, g2, b2 = inv_rgb.split()
+                                inv = _Image.merge("RGBA", (r2, g2, b2, a))
+                            else:
+                                # Convert bilevel to L to ensure linear invert works; otherwise keep mode
+                                if img.mode == '1':
+                                    img = img.convert('L')
+                                if img.mode not in ("L", "RGB"):
+                                    # For unusual modes (e.g., CMYK, P), convert to RGB
+                                    base = img.convert("RGB")
+                                else:
+                                    base = img
+                                inv = _ImageOps.invert(base)
+                            inv.save(inv_default)
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+        # Switch image to match inversion state when the state changed
+        try:
+            state_changed = (new_is_inverted is not None) and (bool(new_is_inverted) != bool(getattr(self, '_initial_is_inverted', False)))
+            if state_changed:
+                from pathlib import Path as _Path
+                def _has_inv_suffix(_stem: str) -> bool:
+                    return _stem.endswith('_INV') or _stem.endswith('_BW_INV') or _stem.endswith('_INV_BW')
+                def _strip_inv_suffix(_stem: str) -> str:
+                    # Remove the longest matching inversion suffix
+                    for suf in ('_BW_INV', '_INV_BW', '_INV'):
+                        if _stem.endswith(suf):
+                            return _stem[: -len(suf)]
+                    return _stem
+                # Resolve current absolute path
+                try:
+                    cur_abs = _abs_path_helper(getattr(self.elem, 'image_path', ''))
+                except Exception:
+                    cur_abs = getattr(self.elem, 'image_path', '')
+                if cur_abs:
+                    sp = _Path(cur_abs)
+                    if sp.exists():
+                        parent = sp.parent
+                        ext = sp.suffix or '.png'
+                        norm_key = _strip_inv_suffix(sp.stem)
+                        # Collect candidates in folder that match after stripping inversion suffixes
+                        try:
+                            all_files = [p for p in parent.iterdir() if p.is_file()]
+                        except Exception:
+                            all_files = []
+                        same_key = [p for p in all_files if _strip_inv_suffix(p.stem) == norm_key]
+                        same_key_same_ext = [p for p in same_key if p.suffix.lower() == ext.lower()]
+                        target_path = None
+                        if bool(new_is_inverted):
+                            # Prefer inverted variants; prioritize plain _INV
+                            invs = [p for p in same_key_same_ext if _has_inv_suffix(p.stem)] or [p for p in same_key if _has_inv_suffix(p.stem)]
+                            if invs:
+                                pref_order = ('_INV', '_BW_INV', '_INV_BW')
+                                for suf in pref_order:
+                                    for p in invs:
+                                        if p.stem.endswith(suf):
+                                            target_path = p
+                                            break
+                                    if target_path is not None:
+                                        break
+                            if target_path is None:
+                                # Fall back to the default inverted file if we created it above
+                                if inv_default is not None and hasattr(inv_default, 'exists') and inv_default.exists():
+                                    target_path = inv_default
+                        else:
+                            # Prefer non-inverted variant (no inversion suffix)
+                            noninvs = [p for p in same_key_same_ext if not _has_inv_suffix(p.stem)] or [p for p in same_key if not _has_inv_suffix(p.stem)]
+                            if noninvs:
+                                base_exact = parent / f"{norm_key}{ext}"
+                                target_path = base_exact if base_exact in noninvs else sorted(noninvs)[0]
+                        if target_path is not None:
+                            # Store using preferences (relative if configured)
+                            try:
+                                new_store = _to_pref_path_helper(str(target_path), bool(getpref(Prefs.USE_RELATIVE_PATHS)))
+                            except Exception:
+                                new_store = str(target_path)
+                            self.elem.image_path = new_store
+        except Exception:
+            pass
         if 'is_phasemask' in w and hasattr(self.elem, 'is_phasemask'):
             self.elem.is_phasemask = bool(w['is_phasemask'].isChecked())
         if 'is_range' in w and hasattr(self.elem, 'is_range'):

@@ -187,11 +187,20 @@ def calculate_screen_images(FieldType, Wavelength, ExtentX, ExtentY, Resolution,
             # Pass-through aperture/lens/etc as new instances to avoid mutating UI objects
             if et == EType.APERTURE:
                 img, wmm, hmm = _aperture_params(e, ExtentX, ExtentY)
+                # Preserve flags from both attributes and optional params dict
+                try:
+                    _params = getattr(e, 'params', {}) or {}
+                except Exception:
+                    _params = {}
+                is_inv = bool(getattr(e, 'is_inverted', False) or _params.get('is_inverted', False))
+                is_pm = bool(getattr(e, 'is_phasemask', False) or _params.get('is_phasemask', False))
                 expanded_elements.append(_Aperture(
                     distance=float(getattr(e, 'distance', 0.0)),
                     image_path=img or "",
                     width_mm=float(wmm),
                     height_mm=float(hmm),
+                    is_inverted=is_inv,
+                    is_phasemask=is_pm,
                     name=_ename(e),
                 ))
             elif et == EType.LENS:
@@ -221,12 +230,61 @@ def calculate_screen_images(FieldType, Wavelength, ExtentX, ExtentY, Resolution,
                 F.propagate(delta)
                 propagated_distance = float(e.distance) * mm
             if e.element_type == EType.APERTURE:
-                if getattr(e, 'image_path', None):
+                impath = getattr(e, 'image_path', "")
+                impath = check_image_path(impath)
+                if impath != "":
+                    isphase = getattr(e, 'is_phasemask', False) # Always read False - does this get passed correctly?
+                    isinverted = getattr(e, 'is_inverted', False)
                     width_mm = getattr(e, 'width_mm', ExtentX)
                     height_mm = getattr(e, 'height_mm', ExtentY)
-                    F.add(ApertureFromImage(e.image_path, 
-                                            image_size=(width_mm * mm, height_mm * mm), 
-                                            simulation = F))
+                    if isphase == False:
+                        # Amplitude aperture
+                        try:
+                            img = Image.open(impath)
+                            # If image has alpha, composite over black
+                            if img.mode in ('RGBA', 'LA') or (img.mode == 'P' and 'transparency' in img.info):
+                                alpha = img.convert('RGBA')
+                                # Create black background
+                                bg = Image.new('RGBA', alpha.size, (0, 0, 0, 255))
+                                img = Image.alpha_composite(bg, alpha).convert('RGB')
+                            # Convert to grayscale
+                            if img.mode != 'L':
+                                img = img.convert('L')
+                                bw_path = os.path.splitext(impath)[0] + "_BW.png"
+                                img.save(bw_path)
+                                impath = bw_path
+                        except Exception as ex:
+                            print(f"Failed to convert aperture image to grayscale: {ex}")
+                        F.add(ApertureFromImage(amplitude_mask_path=impath,
+                                                phase_mask_path="aperatures/white.png",
+                                                image_size=(width_mm * mm, height_mm * mm), 
+                                                simulation = F))
+                    else:
+                        # Phase aperture
+                        # Determine if impath is grayscale or color, or grayscale in RGB format
+                        phase_mask_format = 'hsv'
+                        try:
+                            img_check = Image.open(impath)
+                            arr = np.asarray(img_check.convert('RGB'))
+                            # If all channels are nearly equal, treat as graymap
+                            if np.allclose(arr[:,:,0], arr[:,:,1], atol=2) and np.allclose(arr[:,:,1], arr[:,:,2], atol=2):
+                                phase_mask_format = 'graymap'
+                            else:
+                                # Check saturation in HSV
+                                from matplotlib.colors import rgb_to_hsv
+                                arr_norm = arr / 255.0
+                                hsv = rgb_to_hsv(np.moveaxis(np.array([arr_norm[:,:,0], arr_norm[:,:,1], arr_norm[:,:,2]]), 0, -1))
+                                if np.allclose(hsv[:,:,1], 0, atol=1e-2):
+                                    phase_mask_format = 'graymap'
+                        except Exception as ex:
+                            print(f"Could not check phase mask format: {ex}")
+                        F.add(ApertureFromImage(amplitude_mask_path="aperatures/white.png",
+                                                phase_mask_path=impath,
+                                                image_size=(width_mm * mm, height_mm * mm),
+                                                phase_mask_format=phase_mask_format,
+                                                simulation = F))
+                else:
+                    print("Invalid aperture image path; skipping aperture element.")
             elif e.element_type == EType.LENS:
                 F.add(Lens(f=getattr(e, 'focal_length', 0.0) * mm))
             continue
@@ -347,9 +405,9 @@ def calculate_screen_images(FieldType, Wavelength, ExtentX, ExtentY, Resolution,
             if screen.get('slice_index') is not None:
                 f.write(f"  Slice: {int(screen['slice_index'])}\n")
             if screen.get('range_start_mm') is not None:
-                f.write(f"  Range Start: {screen.get('range_start_mm')} mm\n")
+                f.write(f"  Range Start: {screen['range_start_mm']} mm\n")
             if screen.get('range_end_mm') is not None:
-                f.write(f"  Range End: {screen['range_end_mm']} mm\n")
+                f.write(f"  Range End: {screen['range_end_mm']} mm\n") # TODO: screen['range_end_mm'] was replaced, keep it noted
             if screen.get('steps') is not None:
                 f.write(f"  Steps: {screen['steps']}\n")
             f.write(f"  Filename: {screen['filename']}\n")

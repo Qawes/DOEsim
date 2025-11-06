@@ -1,5 +1,5 @@
-from PyQt6.QtWidgets import QVBoxLayout, QLabel, QPushButton, QSizePolicy, QWidget, QHBoxLayout, QProgressBar
-from PyQt6.QtGui import QPixmap, QImage, QMovie, QImageReader
+from PyQt6.QtWidgets import QVBoxLayout, QLabel, QPushButton, QSizePolicy, QWidget, QHBoxLayout, QProgressBar, QMenu, QFileDialog
+from PyQt6.QtGui import QPixmap, QImage, QMovie, QImageReader, QCursor
 from PyQt6.QtCore import Qt, QSize, QTimer
 import threading
 import os
@@ -19,6 +19,10 @@ class ImageContainer(QWidget):
         self._show_saved_after_solve = False
         self._items = []  # list of nodes relevant to this panel
         self._current_index = 0
+        # Track the path of the currently displayed PNG from working dir (for Save As)
+        self._current_image_path: Path | None = None
+        # Track the path of the currently displayed GIF from working dir (for Save As)
+        self._current_gif_path: Path | None = None
 
         # UI
         layout = QVBoxLayout(self)
@@ -163,7 +167,7 @@ class ImageContainer(QWidget):
                             total += 1
                 self._progress_total = int(total)
                 base_dir = self._screen_results_dir()
-                retain = bool(getpref(Prefs.RETAIN_WORKING_FILES, False))
+                retain = bool(getpref(Prefs.RETAIN_WORKING_FILES, True))
                 self._progress_retain = retain
                 if retain:
                     # At start, pick the most recent unix-time-named subfolder if any, else base_dir
@@ -185,6 +189,7 @@ class ImageContainer(QWidget):
                     if self._progress_timer is None:
                         self._progress_timer = QTimer(self)
                         self._progress_timer.timeout.connect(self._progress_poll)
+                    # Always start the timer (even if already exists)
                     self._progress_timer.start(250)
         except Exception:
             pass
@@ -194,7 +199,6 @@ class ImageContainer(QWidget):
         threading.Thread(target=self._fetch_image, daemon=True).start()
 
     def _progress_poll(self):
-        
         from components.preferences_window import getpref, Prefs
         retain = getattr(self, '_progress_retain', False)
         base_dir = self._screen_results_dir() if self._is_screen_panel() else None
@@ -208,13 +212,13 @@ class ImageContainer(QWidget):
                     self._progress_dir = new_dir
                     try:
                         before = list(self._progress_dir.rglob("*.png")) if self._progress_dir.exists() else []
-                        self._progress_initial_pngs = len(before)
+                        self._progress_initial_pngs = int(len(before))
                     except Exception:
                         self._progress_initial_pngs = 0
         if self._progress_dir is None or self._progress_total <= 0:
             return
         current = list(self._progress_dir.rglob("*.png")) if self._progress_dir.exists() else []
-        done = max(0, len(current) - int(self._progress_initial_pngs))
+        done = max(0, int(len(current)) - int(self._progress_initial_pngs))
         self._show_progress(done, self._progress_total)
         if done >= self._progress_total and self._progress_timer is not None:
             self._progress_timer.stop()
@@ -230,18 +234,6 @@ class ImageContainer(QWidget):
             self.progress_bar.setValue(min(done_i, total_i))
         except Exception:
             pass
-
-    def _progress_stop(self):
-        try:
-            if self._progress_timer is not None:
-                self._progress_timer.stop()
-        except Exception:
-            pass
-        self.progress_label.setVisible(False)
-        self.progress_bar.setVisible(False)
-        self._progress_total = 0
-        self._progress_initial_pngs = 0
-        self._progress_dir = None
 
     def _get_engine_module(self):
         """Return the engine module matching the selected engine in sys params."""
@@ -347,6 +339,7 @@ class ImageContainer(QWidget):
                     pm = QPixmap(str(latest_png))
                     if not pm.isNull():
                         self._pixmap = pm
+                        self._current_image_path = latest_png
                         self._clear_movie()
                         self.update_image()
                         self.image_label.setText("")
@@ -373,8 +366,10 @@ class ImageContainer(QWidget):
         self._update_image_async()
 
     def _update_image_async(self):
-        from PyQt6.QtCore import QTimer
-        QTimer.singleShot(0, self._update_image_main_thread)
+        try:
+            QTimer.singleShot(0, self._update_image_main_thread)
+        except Exception:
+            self._update_image_main_thread()
 
     def _update_image_main_thread(self):
         if (self._show_saved_after_solve and self._is_screen_panel()):
@@ -385,10 +380,96 @@ class ImageContainer(QWidget):
             self._update_ui_from_selection()
         else:
             self.update_image()
-        # Stop and hide progress when solve completes
-        self._progress_stop()
+        # Only stop/hide progress if not in the middle of a solve
+        if not self._solve_in_progress:
+            self._progress_stop()
         self._solve_in_progress = False
         self._set_solve_enabled(True)
+
+    def _progress_stop(self):
+        try:
+            if self._progress_timer is not None:
+                self._progress_timer.stop()
+        except Exception:
+            pass
+        self.progress_label.setVisible(False)
+        self.progress_bar.setVisible(False)
+        self._progress_total = 0
+        self._progress_initial_pngs = 0
+        self._progress_dir = None
+
+    def _get_engine_name(self) -> str | None:
+        tab = self._find_workspace_tab()
+        if tab and hasattr(tab, 'sys_params'):
+            try:
+                return tab.sys_params.engine_combo.currentText()
+            except Exception:
+                return None
+        return None
+
+    def contextMenuEvent(self, a0):
+        try:
+            eng = self._get_engine_name() or ""
+            # Determine availability per panel/engine
+            png_ok = False
+            gif_ok = False
+            if self._is_screen_panel() and eng == "Diffractsim Forward":
+                png_ok = self._current_image_path is not None
+                gif_ok = self._current_gif_path is not None
+            if self._is_aperture_panel() and eng in ("Diffractsim Reverse", "Bitmap Reverse"):
+                png_ok = png_ok or (self._current_image_path is not None)
+            if not (png_ok or gif_ok):
+                return
+            menu = QMenu(self)
+            act_save_png = None
+            act_save_gif = None
+            if png_ok:
+                act_save_png = menu.addAction("Save picture as…")
+            if gif_ok:
+                act_save_gif = menu.addAction("Save animation as…")
+            chosen = menu.exec(QCursor.pos())
+            if chosen == act_save_png and self._current_image_path is not None:
+                src = self._current_image_path
+                try:
+                    default_dir = str(Path.home() / "Pictures")
+                except Exception:
+                    default_dir = str(Path.cwd())
+                suggested = os.path.join(default_dir, os.path.basename(str(src)))
+                dest, _ = QFileDialog.getSaveFileName(self, "Save picture as", suggested, "PNG Files (*.png)")
+                if not dest:
+                    return
+                if not dest.lower().endswith('.png'):
+                    dest += '.png'
+                # Copy file
+                try:
+                    from shutil import copyfile
+                    copyfile(str(src), dest)
+                except Exception:
+                    try:
+                        if self._pixmap is not None and not self._pixmap.isNull():
+                            self._pixmap.save(dest, "PNG")
+                    except Exception:
+                        pass
+            elif chosen == act_save_gif and self._current_gif_path is not None:
+                srcg = self._current_gif_path
+                try:
+                    default_dir = str(Path.home() / "Pictures")
+                except Exception:
+                    default_dir = str(Path.cwd())
+                suggested = os.path.join(default_dir, os.path.basename(str(srcg)))
+                dest, _ = QFileDialog.getSaveFileName(self, "Save animation as", suggested, "GIF Files (*.gif)")
+                if not dest:
+                    return
+                if not dest.lower().endswith('.gif'):
+                    dest += '.gif'
+                try:
+                    from shutil import copyfile
+                    copyfile(str(srcg), dest)
+                except Exception:
+                    # No alternative writer for animated gif; swallow
+                    pass
+        except Exception:
+            pass
 
     # --- Navigation ---
     def _nav_up(self):
@@ -503,6 +584,7 @@ class ImageContainer(QWidget):
             if not path:
                 self.image_label.setText("No bitmap selected for this aperture")
                 self._pixmap = None
+                self._current_image_path = None
                 self.image_label.setPixmap(QPixmap())
                 return
             # Make absolute path for loading using visualizer helper
@@ -515,19 +597,24 @@ class ImageContainer(QWidget):
             if not os.path.exists(abs_path):
                 self.image_label.setText(f"File not found:\n{abs_path}")
                 self._pixmap = None
+                self._current_image_path = None
                 self.image_label.setPixmap(QPixmap())
                 return
             pm = QPixmap(abs_path)
             if pm.isNull():
                 self.image_label.setText("Failed to load image")
                 self._pixmap = None
+                self._current_image_path = None
                 self.image_label.setPixmap(QPixmap())
                 return
             self._pixmap = pm
+            # Not a solve preview, clear current working image path
+            self._current_image_path = None
             self.update_image()
         except Exception:
             self.image_label.setText("Failed to display aperture image")
             self._pixmap = None
+            self._current_image_path = None
             self.image_label.setPixmap(QPixmap())
 
     def _slug(self, nm: str | None) -> str: # TODO: use helpers class
@@ -567,6 +654,8 @@ class ImageContainer(QWidget):
             pass
         self._movie = None
         self._movie_src_size = None
+        # Clear current GIF path when no movie is shown
+        self._current_gif_path = None
 
     def _scaled_movie_size(self) -> QSize | None:
         try:
@@ -610,13 +699,17 @@ class ImageContainer(QWidget):
                 pass
             self.image_label.setMovie(mv)
             mv.start()
+            # Track current GIF path for Save As
+            self._current_gif_path = gif_path
         except Exception:
             self.image_label.setText("Failed to display GIF")
             self._movie = None
+            self._current_gif_path = None
 
     def _show_latest_screen_image_for_item(self, node):
         try:
             self._refresh_saved_screen_images_cache()
+            self._current_image_path = None
             # Determine exact target names
             slug = self._slug(getattr(node, 'name', None))
             # Prefer GIF for range screens
@@ -645,6 +738,13 @@ class ImageContainer(QWidget):
                     if matching:
                         gif_path = matching[-1]
                 if gif_path is not None:
+                    # While showing GIF, remember a suitable PNG fallback to save
+                    try:
+                        png_match = [p for p in getattr(self, '_saved_images', []) if f"{slug}_" in p.name]
+                        if png_match:
+                            self._current_image_path = png_match[-1]
+                    except Exception:
+                        self._current_image_path = None
                     # Show GIF
                     self._pixmap = None
                     self._show_gif(gif_path)
@@ -674,6 +774,7 @@ class ImageContainer(QWidget):
             if pm_path is None:
                 self.image_label.setText("No saved screen images yet. Click Solve to generate.")
                 self._pixmap = None
+                self._current_image_path = None
                 self._clear_movie()
                 self.image_label.setPixmap(QPixmap())
                 return
@@ -682,15 +783,18 @@ class ImageContainer(QWidget):
             if pm.isNull():
                 self.image_label.setText("Failed to load saved screen image")
                 self._pixmap = None
+                self._current_image_path = None
                 self._clear_movie()
                 self.image_label.setPixmap(QPixmap())
                 return
             self._pixmap = pm
+            self._current_image_path = pm_path
             self._clear_movie()
             self.update_image()
         except Exception:
             self.image_label.setText("Failed to browse saved screen images")
             self._pixmap = None
+            self._current_image_path = None
             self._clear_movie()
             self.image_label.setPixmap(QPixmap())
 
