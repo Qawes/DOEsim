@@ -4,9 +4,9 @@ diffractsim-main/
 # Ignore misc python files
 __pycache__/
 .venv/
+test.py
 
 # Ignore Pyinstaller misc files
-compile.py
 build/
 dist/
 main.exe

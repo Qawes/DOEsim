@@ -276,96 +276,96 @@ def fmt_fixed(v: float, decimals: int = 2) -> str:
     except Exception:
         return str(v)
 
-TYPE_APERTURE = "Aperture"
-TYPE_LENS = "Lens"
-TYPE_SCREEN = "Screen"
-TYPE_APERTURE_RESULT = "ApertureResult"
-TYPE_TARGET_INTENSITY = "TargetIntensity"
-
-class Element:
-    """
-    Universal element data model used across UI and engine.
-    - distance: float (mm)
-    - element_type: engine token (lowercase) via property; display 'type' via property
-    - params: dict for engine/runtime parameters (e.g., image_path, width_mm, height_mm, f, range flags)
-    - name: optional display name
-    - next: optional link for UI list management
-
-    Also carries optional convenience attributes commonly used by the UI:
-      focal_length, aperture_path, is_range, range_end, steps, aperture_width_mm, aperture_height_mm
-    """
-    def __init__(self,
-                 name: str | None = None,
-                 elem_type: str | None = None,
-                 distance: float | int | None = None,
-                 focal_length: float | int | None = None,
-                 aperture_path: str | None = None,
-                 is_range: bool | None = None,
-                 range_end: float | int | None = None,
-                 steps: int | None = None,
-                 params: dict | None = None,
-                 # Back-compat alias: allow engine-style constructor
-                 element_type: str | None = None):
-        self.name = name
-        self._display_type = None
-        # Accept either display type (elem_type) or engine type (element_type)
-        if elem_type is not None:
-            self._display_type = elem_type
-        elif element_type is not None:
-            # Use element_type setter mapping
-            self.element_type = element_type
-        self.distance = float(distance) if distance is not None else 0.0
-        self.params = dict(params) if params is not None else {}
-        # Optional fields used by the UI
-        self.focal_length = focal_length
-        self.aperture_path = aperture_path
-        self.is_range = is_range
-        self.range_end = float(range_end) if range_end is not None else None
-        self.steps = int(steps) if steps is not None else None
-        self.aperture_width_mm: float | None = None
-        self.aperture_height_mm: float | None = None
-        # Linked list support for UI ordering
-        self.next: Element | None = None
-
-    # UI property (Display type, e.g., 'Aperture')
-    @property
-    def type(self) -> str | None:
-        return self._display_type
-
-    @type.setter
-    def type(self, v: str | None):
-        self._display_type = v
-
-    # Engine property (lowercase token, e.g., 'aperture')
-    @property
-    def element_type(self) -> str | None:
-        if self._display_type is None:
-            return None
-        key = str(self._display_type).replace(' ', '').lower()
-        mapping = {
-            'aperture': 'aperture',
-            'lens': 'lens',
-            'screen': 'screen',
-            'apertureresult': 'apertureresult',
-            'targetintensity': 'targetintensity',
-        }
-        return mapping.get(key, key)
-
-    @element_type.setter
-    def element_type(self, v: str | None):
-        if v is None:
-            self._display_type = None
-            return
-        key = str(v).replace(' ', '').lower()
-        reverse = {
-            'aperture': 'Aperture',
-            'lens': 'Lens',
-            'screen': 'Screen',
-            'apertureresult': 'Aperture Result',
-            'targetintensity': 'Target Intensity',
-        }
-        self._display_type = reverse.get(key, v)
-
+#TYPE_APERTURE = "Aperture"
+#TYPE_LENS = "Lens"
+#TYPE_SCREEN = "Screen"
+#TYPE_APERTURE_RESULT = "ApertureResult"
+#TYPE_TARGET_INTENSITY = "TargetIntensity"
+#
+#class Element:
+#    """
+#    Universal element data model used across UI and engine.
+#    - distance: float (mm)
+#    - element_type: engine token (lowercase) via property; display 'type' via property
+#    - params: dict for engine/runtime parameters (e.g., image_path, width_mm, height_mm, f, range flags)
+#    - name: optional display name
+#    - next: optional link for UI list management
+#
+#    Also carries optional convenience attributes commonly used by the UI:
+#      focal_length, aperture_path, is_range, range_end, steps, aperture_width_mm, aperture_height_mm
+#    """
+#    def __init__(self,
+#                 name: str | None = None,
+#                 elem_type: str | None = None,
+#                 distance: float | int | None = None,
+#                 focal_length: float | int | None = None,
+#                 aperture_path: str | None = None,
+#                 is_range: bool | None = None,
+#                 range_end: float | int | None = None,
+#                 steps: int | None = None,
+#                 params: dict | None = None,
+#                 # Back-compat alias: allow engine-style constructor
+#                 element_type: str | None = None):
+#        self.name = name
+#        self._display_type = None
+#        # Accept either display type (elem_type) or engine type (element_type)
+#        if elem_type is not None:
+#            self._display_type = elem_type
+#        elif element_type is not None:
+#            # Use element_type setter mapping
+#            self.element_type = element_type
+#        self.distance = float(distance) if distance is not None else 0.0
+#        self.params = dict(params) if params is not None else {}
+#        # Optional fields used by the UI
+#        self.focal_length = focal_length
+#        self.aperture_path = aperture_path
+#        self.is_range = is_range
+#        self.range_end = float(range_end) if range_end is not None else None
+#        self.steps = int(steps) if steps is not None else None
+#        self.aperture_width_mm: float | None = None
+#        self.aperture_height_mm: float | None = None
+#        # Linked list support for UI ordering
+#        self.next: Element | None = None
+#
+#    # UI property (Display type, e.g., 'Aperture')
+#    @property
+#    def type(self) -> str | None:
+#        return self._display_type
+#
+#    @type.setter
+#    def type(self, v: str | None):
+#        self._display_type = v
+#
+#    # Engine property (lowercase token, e.g., 'aperture')
+#    @property
+#    def element_type(self) -> str | None:
+#        if self._display_type is None:
+#            return None
+#        key = str(self._display_type).replace(' ', '').lower()
+#        mapping = {
+#            'aperture': 'aperture',
+#            'lens': 'lens',
+#            'screen': 'screen',
+#            'apertureresult': 'apertureresult',
+#            'targetintensity': 'targetintensity',
+#        }
+#        return mapping.get(key, key)
+#
+#    @element_type.setter
+#    def element_type(self, v: str | None):
+#        if v is None:
+#            self._display_type = None
+#            return
+#        key = str(v).replace(' ', '').lower()
+#        reverse = {
+#            'aperture': 'Aperture',
+#            'lens': 'Lens',
+#            'screen': 'Screen',
+#            'apertureresult': 'Aperture Result',
+#            'targetintensity': 'Target Intensity',
+#        }
+#        self._display_type = reverse.get(key, v)
+#
 
 # --- GUI testing helpers (shared across tests) ---
 

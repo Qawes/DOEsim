@@ -318,7 +318,19 @@ class PreferencesTab(QWidget):
             return
         try:
             s = QSettings("diffractsim", "app")
+            # Clear everything
             s.clear()
+            # Explicitly clear cached last-used directories to be safe
+            try:
+                s.beginGroup("LastDirs")
+                for k in ["workspace", "workspace_save", "workspace_load", "aperture", "aperture_save", "screen_save", "gif_save"]:
+                    try:
+                        s.remove(k)
+                    except Exception:
+                        pass
+                s.endGroup()
+            except Exception:
+                pass
             s.sync()
         except Exception:
             QMessageBox.critical(self, "Reset settings", "Failed to clear application settings.")

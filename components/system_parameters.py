@@ -13,13 +13,12 @@ class SystemParametersWidget(QWidget):
         layout = QHBoxLayout(self)
         
         # Engine selector (placed first)
-        self.engine_combo = QComboBox()
-        # Build model and enable all implemented engines
+        self.engine_combo = QComboBox()        # Build model and enable all implemented engines
         eng_model = QStandardItemModel(self.engine_combo)
         for text, disabled, tip in [
             ("Diffractsim Forward", False, None),
             ("Diffractsim Reverse", False, None),
-            ("Bitmap Reverse", False, None),
+            ("Bitmap Reverse", True, "This engine is disabled"),
         ]:
             it = QStandardItem(text)
             if disabled:

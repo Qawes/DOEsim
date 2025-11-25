@@ -400,17 +400,17 @@ class PhysicalSetupVisualizer(QWidget):
         dist = last_distance + default_distance
         existing_names = [getattr(e, 'name', '') for e in self._elements]
         if elem_type == EType.APERTURE:
-            name = generate_unique_default_name(EType.APERTURE, existing_names)
+            name = generate_unique_default_name(EType.APERTURE.value, existing_names)
             stored_path = self._to_pref_path(white_path)
             elem = _Aperture(distance=dist, image_path=stored_path, width_mm=width_mm, height_mm=height_mm, is_inverted=False, is_phasemask=False, name=name)
         elif elem_type == EType.APERTURE_RESULT:
-            name = generate_unique_default_name("Aperture Result", existing_names)
+            name = generate_unique_default_name(EType.APERTURE_RESULT.value, existing_names)
             elem = _ApertureResult(distance=dist, width_mm=width_mm, height_mm=height_mm, name=name)
         elif elem_type == EType.LENS:
             name = generate_unique_default_name(EType.LENS.value, existing_names)
             elem = _Lens(distance=dist, focal_length=default_lens_focus, name=name)
         elif elem_type == EType.TARGET_INTENSITY:
-            name = generate_unique_default_name("Target Intensity", existing_names)
+            name = generate_unique_default_name(EType.TARGET_INTENSITY.value, existing_names)
             stored_path = self._to_pref_path(white_path)
             elem = _TargetIntensity(distance=dist, image_path=stored_path, width_mm=width_mm, height_mm=height_mm, name=name)
         else:  # Screen
@@ -527,9 +527,26 @@ class PhysicalSetupVisualizer(QWidget):
 
     def _browse_aperture(self, elem, path_edit):
         dlg = QFileDialog(self, "Select Aperture Bitmap", "", "Images (*.png *.jpg *.bmp)")
+        # Initialize to last-used aperture directory if available
+        try:
+            import os
+            s = QSettings("diffractsim", "app")
+            default_dir = os.path.join(os.getcwd(), 'aperatures')
+            start_dir = s.value("LastDirs/aperture", default_dir)
+            if not start_dir or not os.path.isdir(start_dir):
+                start_dir = default_dir
+            dlg.setDirectory(start_dir)
+        except Exception:
+            pass
         if dlg.exec():
             files = dlg.selectedFiles()
             if files:
+                # Remember the directory for next time
+                try:
+                    from os.path import dirname
+                    QSettings("diffractsim", "app").setValue("LastDirs/aperture", dirname(files[0]))
+                except Exception:
+                    pass
                 stored = self._to_pref_path(files[0])
                 if isinstance(elem, (_Aperture, _TargetIntensity)):
                     elem.image_path = stored
@@ -630,21 +647,27 @@ class PhysicalSetupVisualizer(QWidget):
         # Returns (display_list, display->internal map, internal->display map)
         engine = (engine_text or "").strip()
         if engine == "Diffractsim Reverse":
-            display = ["Aperture Result", EType.LENS.value, "Target Intensity"]
+            #display = ["Aperture Result", EType.LENS.value, "Target Intensity"]
+            display = [f"Add {EType.APERTURE_RESULT.value}", f"Add {EType.TARGET_INTENSITY.value}"]
             d2i = {
-                "Aperture Result": EType.APERTURE_RESULT.value,
-                EType.LENS.value: EType.LENS.value,
-                "Target Intensity": EType.TARGET_INTENSITY.value,
+                display[0]: EType.APERTURE_RESULT.value,
+                #EType.LENS.value: EType.LENS.value,
+                display[1]: EType.TARGET_INTENSITY.value,
             }
         elif engine == "Bitmap Reverse":
-            display = ["Aperture Result", "Target Intensity"]
+            display = [f"Add {EType.APERTURE_RESULT.value}", f"Add {EType.TARGET_INTENSITY.value}"]
             d2i = {
-                "Aperture Result": EType.APERTURE_RESULT.value,
-                "Target Intensity": EType.TARGET_INTENSITY.value,
+                display[0]: EType.APERTURE_RESULT.value,
+                display[1]: EType.TARGET_INTENSITY.value,
             }
         else:  # Diffractsim Forward
-            display = [EType.APERTURE.value, EType.LENS.value, EType.SCREEN.value]
-            d2i = {x: x for x in display}
+            display = [f"Add {EType.APERTURE.value}", f"Add {EType.LENS.value}", f"Add {EType.SCREEN.value}"]
+            #d2i = {x: x for x in display}
+            d2i = {
+                display[0]: EType.APERTURE.value,
+                display[1]: EType.LENS.value,
+                display[2]: EType.SCREEN.value,
+            }
         i2d = {}
         for d, i in d2i.items():
             if i not in i2d:

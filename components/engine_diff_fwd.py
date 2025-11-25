@@ -17,7 +17,6 @@ from components.Element import (
 )
 
 from components.helpers import (
-    Element,
     ensure_white_image,
     check_image_path,
 )
@@ -155,6 +154,25 @@ def calculate_screen_images(FieldType, Wavelength, ExtentX, ExtentY, Resolution,
         'output_dir': str(output_dir),
         'retain_working_files': retain,
     }
+    # Export all properties of all original elements
+    try:
+        from dataclasses import asdict as _asdict
+        def _elem_dict(_e):
+            try:
+                return _asdict(_e)
+            except Exception:
+                d = {
+                    'element_type': str(getattr(_e, 'element_type', None)),
+                    'distance': float(getattr(_e, 'distance', 0.0)),
+                    'name': getattr(_e, 'name', None),
+                }
+                for k in ('image_path','width_mm','height_mm','is_inverted','is_phasemask','focal_length','is_range','range_end','steps'):
+                    if hasattr(_e, k):
+                        d[k] = getattr(_e, k)
+                return d
+        metadata['elements'] = [_elem_dict(e) for e in (Elements or [])]
+    except Exception:
+        metadata['elements'] = []
     
     # --- Preprocess: expand screen ranges into per-slice Element entries (retain attributes) ---
     expanded_elements = []
@@ -394,6 +412,17 @@ def calculate_screen_images(FieldType, Wavelength, ExtentX, ExtentY, Resolution,
         f.write(f"Backend: {metadata['backend']}\n")
         f.write(f"Output Dir: {metadata['output_dir']}\n")
         f.write(f"Retain Working Files: {metadata['retain_working_files']}\n\n")
+        # Dump all element properties
+        try:
+            f.write(f"Elements: {len(metadata.get('elements', []))}\n")
+            f.write(f"{'-'*60}\n")
+            for i, el in enumerate(metadata.get('elements', []), start=1):
+                f.write(f"\nElement {i}:\n")
+                for k, v in (el.items() if isinstance(el, dict) else []):
+                    f.write(f"  {k}: {v}\n")
+            f.write("\n")
+        except Exception:
+            pass
         
         f.write(f"Screen Captures: {len(metadata['screens'])}\n")
         f.write(f"{'-'*60}\n")

@@ -2,6 +2,7 @@ from PyQt6.QtWidgets import QMainWindow, QTabWidget, QSplitter, QVBoxLayout, QMe
 from PyQt6.QtCore import Qt, QSettings, QUrl, QTimer
 from PyQt6.QtGui import QIcon, QDesktopServices
 from components.system_parameters import SystemParametersWidget
+from datetime import datetime
 from components.element_table import PhysicalSetupVisualizer
 from components.preview_display import ImageContainer
 from components.preferences_window import PreferencesWindow, getpref, Prefs
@@ -17,7 +18,7 @@ DEFAULT_SPLITTER_V_SIZES = [400, 600]            # top/bottom heights (px)
 DEFAULT_SPLITTER_H_SIZES = [600, 600]            # left/right widths (px)
 DEFAULT_TABLE_COLUMN_PROPORTIONS = [0.2, 0.2, 0.2, 0.4]  # Name, Type, Distance, Value
 # ------------------------------------------------------------------------------------
-VERSION = "0.1.2.element-refacotr" # Application version string
+VERSION = "0.1.4" # Application version string
 # ------------------------------------------------------------------------------------
 
 class WorkspaceTab(QWidget):
@@ -85,7 +86,7 @@ class MainWindow(QMainWindow):
     
     def __init__(self, force_single_workspace: bool = False):
         super().__init__()
-        self.setWindowTitle("DOEsim GUI Proof of Concept")
+        self.setWindowTitle(f"DOEsim v{VERSION}")
         self.setWindowIcon(QIcon("fzp_icon.ico")) 
         self.resize(1200, 800)
         self._createMenuBar()
@@ -205,7 +206,15 @@ class MainWindow(QMainWindow):
             # Choose file path
             default_dir = os.path.join(os.getcwd(), 'workspaces')
             os.makedirs(default_dir, exist_ok=True)
-            suggested = os.path.join(default_dir, f"{workspace_name}.json")
+            # Use last-used workspace SAVE directory if available
+            try:
+                s = QSettings("diffractsim", "app")
+                last_ws_dir = s.value("LastDirs/workspace_save", default_dir)
+                if not last_ws_dir or not os.path.isdir(last_ws_dir):
+                    last_ws_dir = default_dir
+            except Exception:
+                last_ws_dir = default_dir
+            suggested = os.path.join(last_ws_dir, f"{workspace_name}.json")
             file_path, _ = QFileDialog.getSaveFileName(self, "Save Workspace", suggested, "Workspace Files (*.json)")
             if not file_path:
                 return
@@ -215,6 +224,12 @@ class MainWindow(QMainWindow):
 
             with open(file_path, 'w', encoding='utf-8') as f:
                 json.dump(data, f, indent=2, ensure_ascii=False)
+
+            # Remember SAVE directory
+            try:
+                QSettings("diffractsim", "app").setValue("LastDirs/workspace_save", os.path.dirname(file_path))
+            except Exception:
+                pass
 
             if bool(getpref(Prefs.CONFIRM_ON_SAVE)):
                 QMessageBox.information(self, "Save Workspace", f"Workspace saved to:\n{file_path}")
@@ -231,9 +246,22 @@ class MainWindow(QMainWindow):
             # Pick file
             default_dir = os.path.join(os.getcwd(), 'workspaces')
             os.makedirs(default_dir, exist_ok=True)
-            file_path, _ = QFileDialog.getOpenFileName(self, "Load Workspace", default_dir, "Workspace Files (*.json)")
+            # Use last-used workspace LOAD directory if available
+            try:
+                s = QSettings("diffractsim", "app")
+                last_ws_dir = s.value("LastDirs/workspace_load", default_dir)
+                if not last_ws_dir or not os.path.isdir(last_ws_dir):
+                    last_ws_dir = default_dir
+            except Exception:
+                last_ws_dir = default_dir
+            file_path, _ = QFileDialog.getOpenFileName(self, "Load Workspace", last_ws_dir, "Workspace Files (*.json)")
             if not file_path:
                 return
+            # Remember LOAD directory
+            try:
+                QSettings("diffractsim", "app").setValue("LastDirs/workspace_load", os.path.dirname(file_path))
+            except Exception:
+                pass
 
             with open(file_path, 'r', encoding='utf-8') as f:
                 data = json.load(f)
@@ -659,7 +687,7 @@ class MainWindow(QMainWindow):
         QMessageBox.information(self, "Not implemented", "This feature is not implemented in the proof of concept.")
 
     def show_about(self):
-        QMessageBox.about(self, "About", f"Diffractsim GUI Proof of Concept\n\nVersion: {VERSION}\n\nDeveloped using PyQt6.")
+        QMessageBox.about(self, "About", f"Diffractsim GUI Proof of Concept\n\nVersion: {VERSION}\nCompiled on {datetime.now().strftime('%d-%m-%Y')}\n\nDeveloped using PyQt6.\nThis software used AI tools in its development.")
 
     def open_help(self):
         QDesktopServices.openUrl(QUrl("https://github.com/Qawes/DOEsim"))

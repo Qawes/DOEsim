@@ -1,6 +1,6 @@
 from PyQt6.QtWidgets import QVBoxLayout, QLabel, QPushButton, QSizePolicy, QWidget, QHBoxLayout, QProgressBar, QMenu, QFileDialog
 from PyQt6.QtGui import QPixmap, QImage, QMovie, QImageReader, QCursor
-from PyQt6.QtCore import Qt, QSize, QTimer
+from PyQt6.QtCore import Qt, QSize, QTimer, QSettings
 import threading
 import os
 from pathlib import Path
@@ -434,7 +434,16 @@ class ImageContainer(QWidget):
                     default_dir = str(Path.home() / "Pictures")
                 except Exception:
                     default_dir = str(Path.cwd())
-                suggested = os.path.join(default_dir, os.path.basename(str(src)))
+                # Use last-used dir per target kind
+                try:
+                    s = QSettings("diffractsim", "app")
+                    key = "LastDirs/screen_save" if self._is_screen_panel() else "LastDirs/aperture_save"
+                    last_dir = s.value(key, default_dir)
+                    if not last_dir or not os.path.isdir(last_dir):
+                        last_dir = default_dir
+                except Exception:
+                    last_dir = default_dir
+                suggested = os.path.join(last_dir, os.path.basename(str(src)))
                 dest, _ = QFileDialog.getSaveFileName(self, "Save picture as", suggested, "PNG Files (*.png)")
                 if not dest:
                     return
@@ -450,13 +459,27 @@ class ImageContainer(QWidget):
                             self._pixmap.save(dest, "PNG")
                     except Exception:
                         pass
+                # Remember directory
+                try:
+                    key = "LastDirs/screen_save" if self._is_screen_panel() else "LastDirs/aperture_save"
+                    QSettings("diffractsim", "app").setValue(key, os.path.dirname(dest))
+                except Exception:
+                    pass
             elif chosen == act_save_gif and self._current_gif_path is not None:
                 srcg = self._current_gif_path
                 try:
                     default_dir = str(Path.home() / "Pictures")
                 except Exception:
                     default_dir = str(Path.cwd())
-                suggested = os.path.join(default_dir, os.path.basename(str(srcg)))
+                # Use last-used dir for GIF saves
+                try:
+                    s = QSettings("diffractsim", "app")
+                    last_dir_g = s.value("LastDirs/gif_save", default_dir)
+                    if not last_dir_g or not os.path.isdir(last_dir_g):
+                        last_dir_g = default_dir
+                except Exception:
+                    last_dir_g = default_dir
+                suggested = os.path.join(last_dir_g, os.path.basename(str(srcg)))
                 dest, _ = QFileDialog.getSaveFileName(self, "Save animation as", suggested, "GIF Files (*.gif)")
                 if not dest:
                     return
@@ -467,6 +490,11 @@ class ImageContainer(QWidget):
                     copyfile(str(srcg), dest)
                 except Exception:
                     # No alternative writer for animated gif; swallow
+                    pass
+                # Remember directory
+                try:
+                    QSettings("diffractsim", "app").setValue("LastDirs/gif_save", os.path.dirname(dest))
+                except Exception:
                     pass
         except Exception:
             pass
@@ -608,8 +636,13 @@ class ImageContainer(QWidget):
                 self.image_label.setPixmap(QPixmap())
                 return
             self._pixmap = pm
-            # Not a solve preview, clear current working image path
-            self._current_image_path = None
+            # Not a solve preview, but we can allow Save As by pointing to the source image
+            try:
+                from pathlib import Path as _P
+                self._current_image_path = _P(str(abs_path))
+            except Exception:
+                from pathlib import Path as _P
+                self._current_image_path = _P(os.fspath(abs_path))
             self.update_image()
         except Exception:
             self.image_label.setText("Failed to display aperture image")
