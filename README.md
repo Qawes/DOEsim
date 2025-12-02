@@ -97,6 +97,6 @@ The program began in *March 2025* as a quick, local collection of command-line s
 
 <br/>
 
-*Ths repository is migrated from a private one, therefore the very early versions are not tracked.*
+*This repository is migrated from a private one, therefore the very early versions are not tracked.*
 
 [//]: # (Ctrl K V brings up side-by-side preview)
