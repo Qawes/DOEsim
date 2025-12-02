@@ -26,6 +26,7 @@ from components.helpers import (
 )
 from components.preferences_window import getpref, Prefs
 from datetime import datetime
+import matplotlib.colors as mcolors
 
 def calculate_screen_images(
     FieldType: Any,
@@ -154,6 +155,24 @@ def calculate_screen_images(
     PR = FourierPhaseRetrieval(target_amplitude_path=targetpath, new_size=(width, height), pad = (0,0))
     PR.retrieve_phase_mask(max_iter= maxiter, method=method)
     PR.save_retrieved_phase_as_image(resultpath)
+
+    # Post-process: generate monochrome phase mask from hue (phase)
+    try:
+        from PIL import Image
+        if resultpath and path.isfile(resultpath):
+            _img = Image.open(resultpath).convert('RGB')
+            _arr = np.asarray(_img, dtype=float) / 255.0  # shape (H,W,3)
+            # Convert to HSV to get hue channel (range 0..1)
+            _hsv = mcolors.rgb_to_hsv(_arr)
+            _hue = _hsv[..., 0]  # Hue channel
+            _phase = _hue * (2 * np.pi)  # Map hue to 0..2π
+            _gray = np.fliplr(0.5 + np.cos(_phase) / 2.0)  # Apply formula and horizontal flip
+            _gray_u8 = np.clip((_gray * 255.0), 0, 255).astype(np.uint8)
+            _mono_path = resultpath.replace('.png', '_mono.png')
+            Image.fromarray(_gray_u8, mode='L').save(_mono_path)
+            print(f"Monochrome phase mask saved: {_mono_path}")
+    except Exception as _e:
+        print(f"Failed to create monochrome phase mask: {_e}")
 
     # Finalize and write metadata
     try:

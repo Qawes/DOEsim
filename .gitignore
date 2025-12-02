@@ -4,7 +4,7 @@ diffractsim-main/
 # Ignore misc python files
 __pycache__/
 .venv/
-test.py
+test*.py
 
 # Ignore Pyinstaller misc files
 build/
@@ -19,7 +19,8 @@ workspaces/
 # Ignore screencaps
 *.mkv
 
-# Ignore grapihics project files
+# Ignore graphics project files
 *.psd
 *.pdn
+*.pdf
 *.bak
