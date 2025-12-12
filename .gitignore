@@ -13,7 +13,7 @@ main.exe
 main.spec
 
 # Ignore simulation results
-simulation_results/
+simulation_results*/
 workspaces/
 
 # Ignore screencaps
@@ -24,3 +24,6 @@ workspaces/
 *.pdn
 *.pdf
 *.bak
+
+# Temporaryly ignore aperatures folder
+aperatures/
